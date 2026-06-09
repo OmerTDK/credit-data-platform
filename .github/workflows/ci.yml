@@ -14,4 +14,8 @@ jobs:
       - run: uv sync
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+      - run: uv run sqlfluff lint models seeds snapshots tests/dbt
       - run: uv run pytest -v
+      - run: uv run dbt parse
+        env:
+          DBT_PROFILES_DIR: .

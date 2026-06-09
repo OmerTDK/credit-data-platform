@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install lint test ci docker-build docker-test
+.PHONY: help install lint lint-sql test dbt-parse dbt-run dbt-test ci docker-build docker-test
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z][a-zA-Z0-9_-]*:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "%-16s %s\n", $$1, $$2}'
@@ -12,10 +12,24 @@ lint: ## Ruff lint and format check
 	uv run ruff check .
 	uv run ruff format --check .
 
+lint-sql: ## SQLFluff lint dbt SQL (duckdb dialect, dbt templater)
+	uv run sqlfluff lint models seeds snapshots tests/dbt
+
 test: ## Run the test suite
 	uv run pytest -v
 
-ci: lint test ## Run the full CI suite locally
+dbt-parse: ## Validate that the dbt project parses
+	DBT_PROFILES_DIR=. uv run dbt parse
+
+dbt-run: ## Run dbt models against the local DuckDB dev target
+	mkdir -p data/local
+	DBT_PROFILES_DIR=. uv run dbt run
+
+dbt-test: ## Run dbt tests against the local DuckDB dev target
+	mkdir -p data/local
+	DBT_PROFILES_DIR=. uv run dbt test
+
+ci: lint lint-sql test dbt-parse ## Run the full CI suite locally
 
 docker-build: ## Build the project image
 	docker build -t credit-data-platform .
