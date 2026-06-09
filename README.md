@@ -4,6 +4,8 @@ Multi-product consumer-credit data platform: calibrated synthetic loan book, dim
 
 > Status: 🚧 under construction — not yet at definition-of-done.
 
+Phase 0 done: dbt skeleton (dbt-core, DuckDB dev target via committed `profiles.yml`), CI gates for `dbt parse` and SQLFluff (duckdb dialect, dbt templater). BigQuery prod target pending — see [ADR-0001](docs/adr/0001-dual-target-warehouse.md).
+
 ## Why this exists
 
 <!-- System narrative: the problem, why it is interesting, what it demonstrates. -->
