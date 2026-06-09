@@ -1,0 +1,10 @@
+# Committed on purpose (DBT_PROFILES_DIR=. pattern): the dev target is a local
+# DuckDB file with no credentials. The BigQuery prod target is pending — see
+# docs/adr/0001-dual-target-warehouse.md. Secrets never land here.
+credit_platform:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: data/local/credit_platform.duckdb
+      threads: 4

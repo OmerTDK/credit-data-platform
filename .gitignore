@@ -11,3 +11,4 @@ dbt_packages/
 logs/
 *.duckdb
 data/local/
+.user.yml
