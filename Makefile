@@ -13,6 +13,7 @@ lint: ## Ruff lint and format check
 	uv run ruff format --check .
 
 lint-sql: ## SQLFluff lint dbt SQL (duckdb dialect, dbt templater)
+	mkdir -p data/local
 	uv run sqlfluff lint models seeds snapshots tests/dbt
 
 test: ## Run the test suite
