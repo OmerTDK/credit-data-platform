@@ -113,11 +113,6 @@ def product_population(request: pytest.FixtureRequest, population_by_product) ->
     return request.param, population_by_product[request.param]
 
 
-@pytest.fixture(scope="module")
-def population(population_by_product) -> list[tuple[Loan, list[MonthlyPerformance]]]:
-    return population_by_product[ProductType.PERSONAL_LOAN.value]
-
-
 class TestRowShape:
     def test_every_loan_has_rows(self, product_population: ProductPopulation) -> None:
         _, books = product_population
