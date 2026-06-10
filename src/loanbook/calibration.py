@@ -50,6 +50,10 @@ class Calibration:
             "super_prime": 0.075,
         }
     )
+    # The ±150bp pricing noise makes adjacent band rate ranges overlap at the
+    # boundary (prime_plus 8.4-11.4% vs super_prime 6.0-9.0%). Intentional:
+    # real rate sheets show cross-band dispersion from risk-based pricing
+    # add-ons, so band is not perfectly recoverable from rate (ADR-0002).
     interest_rate_noise_half_width: float = 0.015
     monthly_delinquency_entry_hazard_by_band: dict[str, float] = field(
         default_factory=lambda: {

@@ -48,6 +48,12 @@ rates**, simulated loan by loan, month by month:
   (docs/calibration-sources.md). Lifetime outcomes *emerge* from monthly
   dynamics rather than being sampled directly — which is exactly what makes
   roll-rate and vintage analysis on the output meaningful.
+- Loan pricing adds ±150bp uniform noise to each band's anchor APR, so
+  adjacent band rate ranges may overlap at the boundary (with the current
+  anchors, prime_plus and super_prime overlap on 8.4–9.0%). Intentional:
+  real rate sheets show cross-band dispersion from risk-based pricing
+  add-ons, and a perfectly band-separable rate would be a synthetic-data
+  tell.
 - Accounting is integer cents on a fixed amortization schedule; the final
   installment clears the residual exactly.
 - One `numpy.random.Generator` (PCG64, `default_rng(seed)`) threaded through a
