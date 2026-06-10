@@ -1,0 +1,28 @@
+name: credit_platform
+version: "0.1.0"
+profile: credit_platform
+
+flags:
+  send_anonymous_usage_stats: false
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+snapshot-paths: ["snapshots"]
+macro-paths: ["macros"]
+test-paths: ["tests/dbt"]
+
+target-path: target
+clean-targets:
+  - target
+  - dbt_packages
+
+models:
+  credit_platform:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: view
+    dwh:
+      +materialized: table
+    marts:
+      +materialized: table
