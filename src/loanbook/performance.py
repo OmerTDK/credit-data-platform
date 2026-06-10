@@ -75,9 +75,11 @@ def simulate_loan_performance(
 ) -> list[MonthlyPerformance]:
     """Simulate one account month by month until termination or the as-of cutoff."""
     if is_revolving(ProductType(loan.product_type)):
-        raise NotImplementedError(
-            f"Revolving simulation for {loan.loan_id} is not wired up yet; see loanbook.revolving."
-        )
+        # Imported here because revolving.py builds MonthlyPerformance rows
+        # from this module; a top-level import would be circular.
+        from loanbook.revolving import simulate_card_performance
+
+        return simulate_card_performance(loan, as_of_month, calibration.credit_card, rng)
     product = calibration.amortizing_products[loan.product_type]
     return _LoanSimulator(loan, product, rng).run(as_of_month)
 
