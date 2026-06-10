@@ -193,6 +193,77 @@ class TestDefaultAndRecovery:
                     defaulted = True
 
 
+CUMULATIVE_DEFAULT_RATE_SANE_BANDS = {
+    "subprime": (0.25, 0.60),
+    "near_prime": (0.15, 0.45),
+    "prime": (0.04, 0.20),
+    "prime_plus": (0.01, 0.12),
+    "super_prime": (0.0, 0.06),
+}
+SCORE_BANDS_BEST_TO_WORST = ("super_prime", "prime_plus", "prime", "near_prime", "subprime")
+
+
+class TestAggregateOutcomes:
+    """Aggregate realizations that pin the hazard wiring, not just row validity.
+
+    A sign-flipped or disconnected hazard produces rows that satisfy every
+    per-row invariant; what it cannot produce is the calibrated population
+    shape — default rates within a sane band per score band, monotone across
+    bands, with prepayments and cures realized.
+    """
+
+    def cumulative_default_rate_by_band(self, population) -> dict[str, float]:
+        terminal_horizon_months = (
+            MAX_ACTIVE_MONTHS_PAST_MATURITY + default_calibration().recovery_lag_months
+        )
+        loan_count_by_band: dict[str, int] = dict.fromkeys(SCORE_BANDS_BEST_TO_WORST, 0)
+        default_count_by_band: dict[str, int] = dict.fromkeys(SCORE_BANDS_BEST_TO_WORST, 0)
+        for loan, rows in population:
+            fully_observed = (
+                months_between(loan.origination_month, AS_OF_MONTH)
+                >= loan.term_months + terminal_horizon_months
+            )
+            if not fully_observed:
+                continue
+            loan_count_by_band[loan.score_band] += 1
+            if any(row.principal_writeoff_cents > 0 for row in rows):
+                default_count_by_band[loan.score_band] += 1
+        return {
+            band: default_count_by_band[band] / loan_count_by_band[band]
+            for band in SCORE_BANDS_BEST_TO_WORST
+        }
+
+    def test_cumulative_default_rate_is_sane_per_score_band(self, population) -> None:
+        rate_by_band = self.cumulative_default_rate_by_band(population)
+        for band, (lower_bound, upper_bound) in CUMULATIVE_DEFAULT_RATE_SANE_BANDS.items():
+            assert lower_bound <= rate_by_band[band] <= upper_bound, (
+                f"{band} cumulative default rate {rate_by_band[band]:.4f} outside "
+                f"sane band [{lower_bound}, {upper_bound}]"
+            )
+
+    def test_cumulative_default_rate_increases_as_score_band_worsens(self, population) -> None:
+        rate_by_band = self.cumulative_default_rate_by_band(population)
+        rates_best_to_worst = [rate_by_band[band] for band in SCORE_BANDS_BEST_TO_WORST]
+        for better_rate, worse_rate in pairwise(rates_best_to_worst):
+            assert better_rate < worse_rate, f"default rates not ordered: {rate_by_band}"
+
+    def test_prepayment_occurs_in_every_score_band(self, population) -> None:
+        bands_with_prepayment = {
+            loan.score_band for loan, rows in population if any(row.is_prepayment for row in rows)
+        }
+        assert bands_with_prepayment == set(SCORE_BANDS_BEST_TO_WORST)
+
+    def test_cures_occur(self, population) -> None:
+        cure_count = sum(
+            1
+            for _, rows in population
+            for earlier, later in pairwise(rows)
+            if earlier.delinquency_bucket != DelinquencyBucket.CURRENT
+            and later.delinquency_bucket == DelinquencyBucket.CURRENT
+        )
+        assert cure_count > 0
+
+
 def three_month_loan() -> Loan:
     principal_cents = 90_000
     interest_rate = 0.12
