@@ -54,8 +54,15 @@ and the cure/stay/roll-deeper probabilities per bucket
 band, with early-stage delinquency mostly curing and late-stage mostly rolling
 forward (the qualitative pattern in the NY Fed transition data), and scaled so
 the generated book's point-in-time 60+ DPD share and subprime gradient sit
-near the TransUnion figures. Realized values for the default seed are recorded
-in the repo README results section.
+near the TransUnion figures.
+
+Realized values for the default run (`--seed 42 --cohorts 24
+--loans-per-cohort 500`, cohorts 2022-01..2023-12, as-of 2024-12): 60+ DPD
+share of active loans at the as-of month **2.83%** (anchor 3.52%); loans ever
+charged off by band, censored at 12–36 months on book: subprime 31.8%,
+near prime 16.0%, prime 5.9%, prime plus 2.0%, super prime 1.1% —
+monotone, with the censored overall rate consistent with the ~19% uncensored
+LendingClub lifetime figure.
 
 ## Lifetime defaults — anchored target, stylized per band
 

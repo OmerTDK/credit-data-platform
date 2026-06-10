@@ -53,8 +53,8 @@ class Calibration:
     interest_rate_noise_half_width: float = 0.015
     monthly_delinquency_entry_hazard_by_band: dict[str, float] = field(
         default_factory=lambda: {
-            "subprime": 0.055,
-            "near_prime": 0.028,
+            "subprime": 0.070,
+            "near_prime": 0.034,
             "prime": 0.012,
             "prime_plus": 0.005,
             "super_prime": 0.002,
