@@ -26,7 +26,7 @@ relation name must diverge.
 
 **Sources: external parquet via dbt-duckdb `external_location`.** The
 `loanbook` source sets
-`meta: external_location: "read_parquet('data/landing/{name}/*.parquet')"`,
+`config: external_location: "read_parquet('data/landing/{name}/*.parquet')"`,
 and `monthly_performance` overrides it at table level with
 `read_parquet(..., hive_partitioning = true)` over the partition glob.
 DuckDB queries the parquet directly; nothing is copied into the warehouse

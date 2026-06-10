@@ -9,7 +9,7 @@ sources:
       Parquet landing zone written by the seeded synthetic loan-book generator
       (`make generate`). Read directly by DuckDB via read_parquet — nothing is
       copied into the warehouse file (see ADR-0003).
-    meta:
+    config:
       external_location: "read_parquet('data/landing/{name}/*.parquet')"
     tables:
       - name: loans
