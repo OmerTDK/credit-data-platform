@@ -16,25 +16,29 @@ models:
         data_tests:
           - not_null
           - accepted_values:
-              values: ["18-24", "25-34", "35-44", "45-54", "55-64", "65+"]
+              arguments:
+                values: ["18-24", "25-34", "35-44", "45-54", "55-64", "65+"]
       - name: income_band
         description: Annual income band at origination.
         data_tests:
           - not_null
           - accepted_values:
-              values: [under_25k, 25k_to_50k, 50k_to_75k, 75k_to_100k, over_100k]
+              arguments:
+                values: [under_25k, 25k_to_50k, 50k_to_75k, 75k_to_100k, over_100k]
       - name: region
         description: US census region of the borrower.
         data_tests:
           - not_null
           - accepted_values:
-              values: [northeast, midwest, south, west]
+              arguments:
+                values: [northeast, midwest, south, west]
       - name: score_band
         description: Credit score band the borrower was drawn into.
         data_tests:
           - not_null
           - accepted_values:
-              values: [subprime, near_prime, prime, prime_plus, super_prime]
+              arguments:
+                values: [subprime, near_prime, prime, prime_plus, super_prime]
       - name: credit_score
         description: Credit score drawn uniformly within the score band (300-850).
         data_tests:
@@ -55,14 +59,16 @@ models:
         data_tests:
           - not_null
           - relationships:
-              to: ref('stg_loanbook__borrower')
-              field: borrower_id
+              arguments:
+                to: ref('stg_loanbook__borrower')
+                field: borrower_id
       - name: product_type
         description: Credit product of the loan; Phase 1 generates personal loans only.
         data_tests:
           - not_null
           - accepted_values:
-              values: [personal_loan]
+              arguments:
+                values: [personal_loan]
       - name: origination_month
         description: First day of the calendar month the loan was originated in.
         data_tests:
@@ -88,7 +94,8 @@ models:
         data_tests:
           - not_null
           - accepted_values:
-              values: [subprime, near_prime, prime, prime_plus, super_prime]
+              arguments:
+                values: [subprime, near_prime, prime, prime_plus, super_prime]
 
   - name: stg_loanbook__monthly_performance
     description: >
@@ -101,8 +108,9 @@ models:
         data_tests:
           - not_null
           - relationships:
-              to: ref('stg_loanbook__loan')
-              field: loan_id
+              arguments:
+                to: ref('stg_loanbook__loan')
+                field: loan_id
       - name: months_on_book
         description: >
           1-based loan age in months; the row reports the month
@@ -150,13 +158,15 @@ models:
         data_tests:
           - not_null
           - accepted_values:
-              values: [current, dpd_30, dpd_60, dpd_90_plus, default]
+              arguments:
+                values: [current, dpd_30, dpd_60, dpd_90_plus, default]
       - name: loan_status
         description: Lifecycle status of the loan as of this month.
         data_tests:
           - not_null
           - accepted_values:
-              values: [active, paid_off, defaulted, recovery_complete]
+              arguments:
+                values: [active, paid_off, defaulted, recovery_complete]
       - name: is_prepayment
         description: Whether the loan terminated this month by voluntary full prepayment.
         data_tests:
