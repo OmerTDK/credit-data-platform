@@ -1,10 +1,15 @@
-"""Tests for whole-book generation across origination cohorts."""
+"""Tests for whole-book generation across origination cohorts and products."""
 
+from dataclasses import replace
 from datetime import date
 
 import pytest
 
+from loanbook.calibration import default_calibration
 from loanbook.generate import GeneratorConfig, LoanBook, generate_loan_book
+from loanbook.products import ProductType
+
+PRODUCT_MIX_ABSOLUTE_TOLERANCE = 0.08
 
 
 @pytest.fixture(scope="module")
@@ -54,6 +59,35 @@ class TestGenerateLoanBook:
     def test_performance_covers_every_loan(self, small_book: LoanBook) -> None:
         loans_with_rows = {row.loan_id for row in small_book.monthly_performance}
         assert loans_with_rows == {loan.loan_id for loan in small_book.loans}
+
+    def test_book_contains_every_product(self, small_book: LoanBook) -> None:
+        products_in_book = {loan.product_type for loan in small_book.loans}
+        assert products_in_book == {product.value for product in ProductType}
+
+    def test_product_counts_track_the_configured_mix(self, small_book: LoanBook) -> None:
+        mix = default_calibration().product_mix
+        book_size = len(small_book.loans)
+        for product, weight in mix.items():
+            realized_share = (
+                sum(1 for loan in small_book.loans if loan.product_type == product) / book_size
+            )
+            assert abs(realized_share - weight) < PRODUCT_MIX_ABSOLUTE_TOLERANCE, (
+                f"{product}: realized {realized_share:.3f} vs configured {weight}"
+            )
+
+    def test_custom_product_mix_overrides_the_book_composition(self) -> None:
+        single_product_calibration = replace(
+            default_calibration(), product_mix={ProductType.AUTO_LOAN.value: 1.0}
+        )
+        config = GeneratorConfig(
+            seed=7,
+            cohort_count=2,
+            loans_per_cohort=10,
+            start_month=date(2022, 1, 1),
+            as_of_month=date(2023, 6, 1),
+        )
+        book = generate_loan_book(config, single_product_calibration)
+        assert {loan.product_type for loan in book.loans} == {ProductType.AUTO_LOAN.value}
 
     def test_default_as_of_is_twelve_months_after_last_cohort(self) -> None:
         config = GeneratorConfig(seed=1, cohort_count=6, loans_per_cohort=1)

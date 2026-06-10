@@ -18,9 +18,10 @@ from datetime import date
 import numpy as np
 
 from loanbook.amortization import AmortizationEntry, build_amortization_schedule
-from loanbook.calibration import Calibration
+from loanbook.calibration import AmortizingProductCalibration, Calibration
 from loanbook.loans import Loan
 from loanbook.months import add_months
+from loanbook.products import ProductType, is_revolving
 from loanbook.state_machine import (
     MISSED_PAYMENTS_FOR_DEFAULT,
     TERMINAL_STATUSES,
@@ -36,17 +37,31 @@ DELINQUENT_OUTCOMES = ("cure", "stay", "roll_deeper")
 
 @dataclass(frozen=True)
 class MonthlyPerformance:
+    """One account-month for any product.
+
+    Revolving-only fields are inert on amortizing rows: draw_cents is 0,
+    utilization_rate is None, and interest_charged_cents equals interest_paid_cents
+    (installment interest is only recognized when its installment is paid;
+    card interest capitalizes into the balance whether paid or not). Every row
+    satisfies: ending = beginning + draw + interest_charged - interest_paid
+    - principal_paid - writeoff.
+    """
+
     loan_id: str
+    product_type: str
     period: int
     report_month: date
     beginning_balance_cents: int
+    draw_cents: int
     scheduled_payment_cents: int
     actual_payment_cents: int
     principal_paid_cents: int
     interest_paid_cents: int
+    interest_charged_cents: int
     ending_balance_cents: int
     principal_writeoff_cents: int
     recovery_cents: int
+    utilization_rate: float | None
     delinquency_bucket: DelinquencyBucket
     loan_status: LoanStatus
     is_prepayment: bool
@@ -58,14 +73,23 @@ def simulate_loan_performance(
     calibration: Calibration,
     rng: np.random.Generator,
 ) -> list[MonthlyPerformance]:
-    """Simulate one loan month by month until termination or the as-of cutoff."""
-    return _LoanSimulator(loan, calibration, rng).run(as_of_month)
+    """Simulate one account month by month until termination or the as-of cutoff."""
+    if is_revolving(ProductType(loan.product_type)):
+        # Imported here because revolving.py builds MonthlyPerformance rows
+        # from this module; a top-level import would be circular.
+        from loanbook.revolving import simulate_card_performance
+
+        return simulate_card_performance(loan, as_of_month, calibration.credit_card, rng)
+    product = calibration.amortizing_products[loan.product_type]
+    return _LoanSimulator(loan, product, rng).run(as_of_month)
 
 
 class _LoanSimulator:
-    def __init__(self, loan: Loan, calibration: Calibration, rng: np.random.Generator) -> None:
+    def __init__(
+        self, loan: Loan, product: AmortizingProductCalibration, rng: np.random.Generator
+    ) -> None:
         self.loan = loan
-        self.calibration = calibration
+        self.product = product
         self.rng = rng
         self.schedule = build_amortization_schedule(
             loan.principal_cents, loan.interest_rate, loan.term_months
@@ -108,17 +132,17 @@ class _LoanSimulator:
         return self._emit_payment_outcome(period, due_now, newly_due, installments_to_pay)
 
     def _draws_prepayment(self) -> bool:
-        smm = self.calibration.monthly_prepayment_rate_by_band[self.loan.score_band]
+        smm = self.product.monthly_prepayment_rate_by_band[self.loan.score_band]
         return self.rng.random() < smm
 
     def _current_installments_to_pay(self, newly_due: int) -> int:
-        hazard = self.calibration.monthly_delinquency_entry_hazard_by_band[self.loan.score_band]
+        hazard = self.product.monthly_delinquency_entry_hazard_by_band[self.loan.score_band]
         if self.rng.random() < hazard:
             return 0
         return newly_due
 
     def _delinquent_installments_to_pay(self, arrears_before: int, newly_due: int) -> int:
-        outcomes = self.calibration.delinquent_roll_probabilities[self.bucket.value]
+        outcomes = self.product.delinquent_roll_probabilities[self.bucket.value]
         outcome = str(
             self.rng.choice(
                 DELINQUENT_OUTCOMES,
@@ -139,16 +163,20 @@ class _LoanSimulator:
         self._transition_to(DelinquencyBucket.CURRENT)
         return MonthlyPerformance(
             loan_id=self.loan.loan_id,
+            product_type=self.loan.product_type,
             period=period,
             report_month=add_months(self.loan.origination_month, period),
             beginning_balance_cents=beginning_balance,
+            draw_cents=0,
             scheduled_payment_cents=self._scheduled_payment_cents(due_now, newly_due),
             actual_payment_cents=beginning_balance + interest_cents,
             principal_paid_cents=beginning_balance,
             interest_paid_cents=interest_cents,
+            interest_charged_cents=interest_cents,
             ending_balance_cents=0,
             principal_writeoff_cents=0,
             recovery_cents=0,
+            utilization_rate=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=True,
@@ -174,16 +202,20 @@ class _LoanSimulator:
         interest_paid = sum(entry.interest_cents for entry in paid_entries)
         return MonthlyPerformance(
             loan_id=self.loan.loan_id,
+            product_type=self.loan.product_type,
             period=period,
             report_month=add_months(self.loan.origination_month, period),
             beginning_balance_cents=beginning_balance,
+            draw_cents=0,
             scheduled_payment_cents=self._scheduled_payment_cents(due_now, newly_due),
             actual_payment_cents=principal_paid + interest_paid,
             principal_paid_cents=principal_paid,
             interest_paid_cents=interest_paid,
+            interest_charged_cents=interest_paid,
             ending_balance_cents=self._open_balance_cents(),
             principal_writeoff_cents=0,
             recovery_cents=0,
+            utilization_rate=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=False,
@@ -198,16 +230,20 @@ class _LoanSimulator:
         self.writeoff_cents = beginning_balance
         return MonthlyPerformance(
             loan_id=self.loan.loan_id,
+            product_type=self.loan.product_type,
             period=period,
             report_month=add_months(self.loan.origination_month, period),
             beginning_balance_cents=beginning_balance,
+            draw_cents=0,
             scheduled_payment_cents=self._scheduled_payment_cents(due_now, newly_due),
             actual_payment_cents=0,
             principal_paid_cents=0,
             interest_paid_cents=0,
+            interest_charged_cents=0,
             ending_balance_cents=0,
             principal_writeoff_cents=beginning_balance,
             recovery_cents=0,
+            utilization_rate=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=False,
@@ -223,7 +259,7 @@ class _LoanSimulator:
         cannot freeze on a matured balance (ADR-0002).
         """
         arrears = self.loan.term_months - self.installments_paid
-        cure_probability = self.calibration.delinquent_roll_probabilities[self.bucket.value]["cure"]
+        cure_probability = self.product.delinquent_roll_probabilities[self.bucket.value]["cure"]
         if self.rng.random() < cure_probability:
             return self._emit_payment_outcome(period, self.loan.term_months, 0, arrears)
         if self.bucket == DelinquencyBucket.DPD_90_PLUS:
@@ -235,16 +271,20 @@ class _LoanSimulator:
         self._transition_to(next_deeper_bucket(self.bucket))
         return MonthlyPerformance(
             loan_id=self.loan.loan_id,
+            product_type=self.loan.product_type,
             period=period,
             report_month=add_months(self.loan.origination_month, period),
             beginning_balance_cents=balance,
+            draw_cents=0,
             scheduled_payment_cents=0,
             actual_payment_cents=0,
             principal_paid_cents=0,
             interest_paid_cents=0,
+            interest_charged_cents=0,
             ending_balance_cents=balance,
             principal_writeoff_cents=0,
             recovery_cents=0,
+            utilization_rate=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=False,
@@ -252,26 +292,30 @@ class _LoanSimulator:
 
     def _step_defaulted_month(self, period: int) -> MonthlyPerformance:
         months_since_default = period - self.default_period
-        is_recovery_month = months_since_default == self.calibration.recovery_lag_months
+        is_recovery_month = months_since_default == self.product.recovery_lag_months
         recovery_cents = 0
         if is_recovery_month:
             recovery_cents = round(
-                self.writeoff_cents * self.calibration.recovery_rate_on_defaulted_balance
+                self.writeoff_cents * self.product.recovery_rate_on_defaulted_balance
             )
             self.status = LoanStatus.RECOVERY_COMPLETE
         self._transition_to(DelinquencyBucket.DEFAULT)
         return MonthlyPerformance(
             loan_id=self.loan.loan_id,
+            product_type=self.loan.product_type,
             period=period,
             report_month=add_months(self.loan.origination_month, period),
             beginning_balance_cents=0,
+            draw_cents=0,
             scheduled_payment_cents=0,
             actual_payment_cents=0,
             principal_paid_cents=0,
             interest_paid_cents=0,
+            interest_charged_cents=0,
             ending_balance_cents=0,
             principal_writeoff_cents=0,
             recovery_cents=recovery_cents,
+            utilization_rate=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=False,
