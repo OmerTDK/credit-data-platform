@@ -8,7 +8,6 @@ import duckdb
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-LANDING_DIR = REPO_ROOT / "data" / "landing"
 DUCKDB_FILE = REPO_ROOT / "data" / "local" / "credit_platform.duckdb"
 
 GENERATE_COMMAND = [
@@ -46,11 +45,10 @@ def _run_in_repo(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 @pytest.fixture(scope="module")
 def staging_build() -> subprocess.CompletedProcess[str]:
-    if not LANDING_DIR.exists():
-        generated = _run_in_repo(GENERATE_COMMAND)
-        assert generated.returncode == 0, (
-            f"loanbook generate failed (exit {generated.returncode}):\n{generated.stderr}"
-        )
+    generated = _run_in_repo(GENERATE_COMMAND)
+    assert generated.returncode == 0, (
+        f"loanbook generate failed (exit {generated.returncode}):\n{generated.stderr}"
+    )
     DUCKDB_FILE.parent.mkdir(parents=True, exist_ok=True)
     return _run_in_repo(["uv", "run", "dbt", "build", "--select", "staging"])
 
