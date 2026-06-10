@@ -20,9 +20,16 @@ models:
   credit_platform:
     staging:
       +materialized: view
+      +schema: stg
     intermediate:
       +materialized: view
+      +schema: int
     dwh:
       +materialized: table
+      +schema: dwh
     marts:
       +materialized: table
+      risk:
+        +schema: mart_risk
+      finance:
+        +schema: mart_finance

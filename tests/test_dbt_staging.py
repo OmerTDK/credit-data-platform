@@ -74,7 +74,7 @@ def test_staging_views_land_in_stg_schema(
                 "WHERE table_schema = 'stg' AND table_type = 'VIEW'"
             ).fetchall()
         )
-    assert EXPECTED_STAGING_VIEWS <= views, (
+    assert views >= EXPECTED_STAGING_VIEWS, (
         f"Missing staging views: {EXPECTED_STAGING_VIEWS - views}; found: {views}"
     )
 
@@ -90,9 +90,7 @@ def test_staging_row_counts_match_landing_parquet(
     }
     with duckdb.connect(str(DUCKDB_FILE), read_only=True) as connection:
         for view_name, landing_glob in landing_globs.items():
-            view_count = connection.execute(
-                f"SELECT COUNT(*) FROM stg.{view_name}"
-            ).fetchone()[0]
+            view_count = connection.execute(f"SELECT COUNT(*) FROM stg.{view_name}").fetchone()[0]
             landing_count = connection.execute(
                 f"SELECT COUNT(*) FROM read_parquet('{REPO_ROOT / landing_glob}')"
             ).fetchone()[0]
