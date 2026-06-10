@@ -186,7 +186,7 @@ class TestForcedTransactorPath:
             assert row.ending_balance_cents == 0
             assert row.actual_payment_cents == row.beginning_balance_cents + row.draw_cents
             assert row.delinquency_bucket == DelinquencyBucket.CURRENT
-            assert row.utilization == 0.0
+            assert row.utilization_rate == 0.0
 
     def test_open_account_emits_a_row_every_month_through_as_of(self, forced) -> None:
         card, rows = forced
@@ -215,7 +215,7 @@ class TestForcedRevolverPath:
         target = CARD_CALIBRATION.target_utilization_by_band[card.score_band]
         settled_rows = rows[12:]
         assert settled_rows
-        mean_utilization = sum(row.utilization for row in settled_rows) / len(settled_rows)
+        mean_utilization = sum(row.utilization_rate for row in settled_rows) / len(settled_rows)
         assert abs(mean_utilization - target) < 0.2
 
 
@@ -333,7 +333,7 @@ class TestBalanceIntegrity:
     def test_utilization_is_the_ending_balance_share_of_the_limit(self, population) -> None:
         for card, rows in population:
             for row in rows:
-                assert row.utilization == round(
+                assert row.utilization_rate == round(
                     row.ending_balance_cents / card.credit_limit_cents,
                     UTILIZATION_DECIMAL_PLACES,
                 )
@@ -444,7 +444,7 @@ class TestAggregateOutcomes:
         }
         for card, rows in population:
             if rows[-1].loan_status == LoanStatus.ACTIVE:
-                final_utilization_by_band[card.score_band].append(rows[-1].utilization)
+                final_utilization_by_band[card.score_band].append(rows[-1].utilization_rate)
         mean_by_band = {
             band: sum(values) / len(values) for band, values in final_utilization_by_band.items()
         }

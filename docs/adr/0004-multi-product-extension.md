@@ -82,7 +82,7 @@ dynamics downstream phases consume.
 
 `loans` and `monthly_performance` stay single tables with a `product_type`
 column threaded through both. Card-only fields (`credit_limit`,
-`utilization`, `draw_amount`) are NULL/zero on amortizing rows; amortizing
+`utilization_rate`, `draw_amount`) are NULL/zero on amortizing rows; amortizing
 fields (`principal_amount`, `term_months`, `monthly_payment`) are NULL on
 cards. The `Loan` constructor rejects any other combination, so nullability
 is a contract, not an accident. A new `interest_charged` column separates

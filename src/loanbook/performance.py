@@ -40,7 +40,7 @@ class MonthlyPerformance:
     """One account-month for any product.
 
     Revolving-only fields are inert on amortizing rows: draw_cents is 0,
-    utilization is None, and interest_charged_cents equals interest_paid_cents
+    utilization_rate is None, and interest_charged_cents equals interest_paid_cents
     (installment interest is only recognized when its installment is paid;
     card interest capitalizes into the balance whether paid or not). Every row
     satisfies: ending = beginning + draw + interest_charged - interest_paid
@@ -61,7 +61,7 @@ class MonthlyPerformance:
     ending_balance_cents: int
     principal_writeoff_cents: int
     recovery_cents: int
-    utilization: float | None
+    utilization_rate: float | None
     delinquency_bucket: DelinquencyBucket
     loan_status: LoanStatus
     is_prepayment: bool
@@ -176,7 +176,7 @@ class _LoanSimulator:
             ending_balance_cents=0,
             principal_writeoff_cents=0,
             recovery_cents=0,
-            utilization=None,
+            utilization_rate=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=True,
@@ -215,7 +215,7 @@ class _LoanSimulator:
             ending_balance_cents=self._open_balance_cents(),
             principal_writeoff_cents=0,
             recovery_cents=0,
-            utilization=None,
+            utilization_rate=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=False,
@@ -243,7 +243,7 @@ class _LoanSimulator:
             ending_balance_cents=0,
             principal_writeoff_cents=beginning_balance,
             recovery_cents=0,
-            utilization=None,
+            utilization_rate=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=False,
@@ -284,7 +284,7 @@ class _LoanSimulator:
             ending_balance_cents=balance,
             principal_writeoff_cents=0,
             recovery_cents=0,
-            utilization=None,
+            utilization_rate=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=False,
@@ -315,7 +315,7 @@ class _LoanSimulator:
             ending_balance_cents=0,
             principal_writeoff_cents=0,
             recovery_cents=recovery_cents,
-            utilization=None,
+            utilization_rate=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=False,

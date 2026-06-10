@@ -131,7 +131,7 @@ class TestRowShape:
         for _, rows in books:
             for row in rows:
                 assert row.draw_cents == 0
-                assert row.utilization is None
+                assert row.utilization_rate is None
 
     def test_amortizing_interest_charged_equals_interest_paid(
         self, product_population: ProductPopulation

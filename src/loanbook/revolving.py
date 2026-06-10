@@ -256,7 +256,7 @@ class _CardSimulator:
             ending_balance_cents=self.balance_cents,
             principal_writeoff_cents=principal_writeoff_cents,
             recovery_cents=recovery_cents,
-            utilization=round(
+            utilization_rate=round(
                 self.balance_cents / self.loan.credit_limit_cents, UTILIZATION_DECIMAL_PLACES
             ),
             delinquency_bucket=self.bucket,

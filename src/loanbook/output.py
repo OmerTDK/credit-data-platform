@@ -117,7 +117,7 @@ def _performance_table(rows: list[MonthlyPerformance]) -> pa.Table:
             "ending_balance": _money([row.ending_balance_cents for row in rows]),
             "principal_writeoff": _money([row.principal_writeoff_cents for row in rows]),
             "recovery_amount": _money([row.recovery_cents for row in rows]),
-            "utilization": pa.array([row.utilization for row in rows], type=pa.float64()),
+            "utilization_rate": pa.array([row.utilization_rate for row in rows], type=pa.float64()),
             "delinquency_bucket": pa.array(
                 [row.delinquency_bucket.value for row in rows], type=pa.string()
             ),

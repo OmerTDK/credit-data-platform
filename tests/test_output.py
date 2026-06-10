@@ -63,7 +63,7 @@ EXPECTED_PERFORMANCE_SCHEMA = pa.schema(
         ("ending_balance", MONEY),
         ("principal_writeoff", MONEY),
         ("recovery_amount", MONEY),
-        ("utilization", pa.float64()),
+        ("utilization_rate", pa.float64()),
         ("delinquency_bucket", pa.string()),
         ("loan_status", pa.string()),
         ("is_prepayment", pa.bool_()),
@@ -162,15 +162,15 @@ class TestProductFieldNullability:
         ).fetchone()[0]
         assert violation_count == 0
 
-    def test_utilization_is_card_only(self, landing_dir: Path) -> None:
+    def test_utilization_rate_is_card_only(self, landing_dir: Path) -> None:
         violation_count = duckdb.sql(
             f"""
             SELECT COUNT(*)
             FROM read_parquet(
                 '{landing_dir}/monthly_performance/*/*.parquet', hive_partitioning = true
             )
-            WHERE (product_type = 'credit_card' AND utilization IS NULL)
-               OR (product_type <> 'credit_card' AND utilization IS NOT NULL)
+            WHERE (product_type = 'credit_card' AND utilization_rate IS NULL)
+               OR (product_type <> 'credit_card' AND utilization_rate IS NOT NULL)
             """
         ).fetchone()[0]
         assert violation_count == 0
