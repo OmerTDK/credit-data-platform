@@ -4,6 +4,8 @@ from datetime import date
 from pathlib import Path
 
 import duckdb
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from loanbook.generate import GeneratorConfig, generate_loan_book
@@ -15,6 +17,52 @@ CONFIG = GeneratorConfig(
     loans_per_cohort=40,
     start_month=date(2022, 1, 1),
     as_of_month=date(2023, 6, 1),
+)
+
+MONEY = pa.decimal128(12, 2)
+
+EXPECTED_BORROWERS_SCHEMA = pa.schema(
+    [
+        ("borrower_id", pa.string()),
+        ("age_band", pa.string()),
+        ("income_band", pa.string()),
+        ("region", pa.string()),
+        ("score_band", pa.string()),
+        ("credit_score", pa.int16()),
+    ]
+)
+
+EXPECTED_LOANS_SCHEMA = pa.schema(
+    [
+        ("loan_id", pa.string()),
+        ("borrower_id", pa.string()),
+        ("product_type", pa.string()),
+        ("origination_month", pa.date32()),
+        ("principal_amount", MONEY),
+        ("term_months", pa.int16()),
+        ("interest_rate", pa.float64()),
+        ("monthly_payment", MONEY),
+        ("score_band", pa.string()),
+    ]
+)
+
+EXPECTED_PERFORMANCE_SCHEMA = pa.schema(
+    [
+        ("loan_id", pa.string()),
+        ("period", pa.int16()),
+        ("report_month", pa.date32()),
+        ("beginning_balance", MONEY),
+        ("scheduled_payment", MONEY),
+        ("actual_payment", MONEY),
+        ("principal_paid", MONEY),
+        ("interest_paid", MONEY),
+        ("ending_balance", MONEY),
+        ("principal_writeoff", MONEY),
+        ("recovery_amount", MONEY),
+        ("delinquency_bucket", pa.string()),
+        ("loan_status", pa.string()),
+        ("is_prepayment", pa.bool_()),
+    ]
 )
 
 
@@ -48,6 +96,32 @@ class TestLandingLayout:
             f"'{landing_dir}/monthly_performance/*/*.parquet', hive_partitioning = true) LIMIT 1"
         ).fetchone()[0]
         assert column_type == "DATE"
+
+
+class TestPinnedSchemas:
+    """Dropping, reordering, renaming, or retyping a landing column must fail here."""
+
+    def test_borrowers_schema_is_pinned(self, landing_dir: Path) -> None:
+        written = pq.read_schema(landing_dir / "borrowers" / "borrowers.parquet")
+        assert written.equals(EXPECTED_BORROWERS_SCHEMA), (
+            f"borrowers schema drifted:\n{written}\nexpected:\n{EXPECTED_BORROWERS_SCHEMA}"
+        )
+
+    def test_loans_schema_is_pinned(self, landing_dir: Path) -> None:
+        written = pq.read_schema(landing_dir / "loans" / "loans.parquet")
+        assert written.equals(EXPECTED_LOANS_SCHEMA), (
+            f"loans schema drifted:\n{written}\nexpected:\n{EXPECTED_LOANS_SCHEMA}"
+        )
+
+    def test_every_performance_partition_schema_is_pinned(self, landing_dir: Path) -> None:
+        partition_files = sorted((landing_dir / "monthly_performance").glob("*/rows.parquet"))
+        assert partition_files
+        for partition_file in partition_files:
+            written = pq.read_schema(partition_file)
+            assert written.equals(EXPECTED_PERFORMANCE_SCHEMA), (
+                f"monthly_performance schema drifted in {partition_file.parent.name}:\n"
+                f"{written}\nexpected:\n{EXPECTED_PERFORMANCE_SCHEMA}"
+            )
 
 
 class TestDuckDbReadability:
