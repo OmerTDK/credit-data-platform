@@ -4,6 +4,12 @@ Arrears are modeled as whole missed installments: due installments accrue one
 per month until maturity, and the gap between due and paid installments maps
 to the delinquency bucket. Every emitted transition is validated against the
 legal-transition table, so an illegal move is a crash, not a data point.
+
+Past maturity nothing new comes due, but unpaid arrears age 30 more days each
+month, so a matured delinquent loan either cures in full (at its bucket's cure
+probability) or rolls one bucket deeper every month — 90+ that fails to cure
+defaults. A loan therefore never stays active more than three months past
+maturity (ADR-0002).
 """
 
 from dataclasses import dataclass
@@ -21,6 +27,7 @@ from loanbook.state_machine import (
     DelinquencyBucket,
     LoanStatus,
     bucket_for_missed_payments,
+    next_deeper_bucket,
     validate_bucket_transition,
 )
 
@@ -86,6 +93,8 @@ class _LoanSimulator:
     def _step_active_month(self, period: int) -> MonthlyPerformance:
         due_now = min(period, self.loan.term_months)
         newly_due = due_now - min(period - 1, self.loan.term_months)
+        if newly_due == 0:
+            return self._step_matured_delinquent_month(period)
         arrears_before = due_now - newly_due - self.installments_paid
         is_current = arrears_before == 0
 
@@ -198,6 +207,43 @@ class _LoanSimulator:
             interest_paid_cents=0,
             ending_balance_cents=0,
             principal_writeoff_cents=beginning_balance,
+            recovery_cents=0,
+            delinquency_bucket=self.bucket,
+            loan_status=self.status,
+            is_prepayment=False,
+        )
+
+    def _step_matured_delinquent_month(self, period: int) -> MonthlyPerformance:
+        """Resolve a loan that is past maturity with unpaid arrears.
+
+        Nothing new comes due, but the arrears age 30 more days each month:
+        the borrower either cures in full at the current bucket's cure
+        probability, or the bucket deepens by one — 90+ that fails to cure
+        defaults. "Stay" does not exist here because the delinquency clock
+        cannot freeze on a matured balance (ADR-0002).
+        """
+        arrears = self.loan.term_months - self.installments_paid
+        cure_probability = self.calibration.delinquent_roll_probabilities[self.bucket.value]["cure"]
+        if self.rng.random() < cure_probability:
+            return self._emit_payment_outcome(period, self.loan.term_months, 0, arrears)
+        if self.bucket == DelinquencyBucket.DPD_90_PLUS:
+            return self._emit_default(period, self.loan.term_months, 0, self._open_balance_cents())
+        return self._emit_matured_aging_month(period)
+
+    def _emit_matured_aging_month(self, period: int) -> MonthlyPerformance:
+        balance = self._open_balance_cents()
+        self._transition_to(next_deeper_bucket(self.bucket))
+        return MonthlyPerformance(
+            loan_id=self.loan.loan_id,
+            period=period,
+            report_month=add_months(self.loan.origination_month, period),
+            beginning_balance_cents=balance,
+            scheduled_payment_cents=0,
+            actual_payment_cents=0,
+            principal_paid_cents=0,
+            interest_paid_cents=0,
+            ending_balance_cents=balance,
+            principal_writeoff_cents=0,
             recovery_cents=0,
             delinquency_bucket=self.bucket,
             loan_status=self.status,

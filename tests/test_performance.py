@@ -11,11 +11,14 @@ from itertools import pairwise
 import numpy as np
 import pytest
 
+from loanbook.amortization import monthly_payment_cents
 from loanbook.borrowers import generate_borrower
-from loanbook.calibration import default_calibration
-from loanbook.loans import Loan, generate_loan
+from loanbook.calibration import SCORE_BANDS, Calibration, default_calibration
+from loanbook.loans import PERSONAL_LOAN_PRODUCT_TYPE, Loan, generate_loan
+from loanbook.months import MONTHS_PER_YEAR
 from loanbook.performance import MonthlyPerformance, simulate_loan_performance
 from loanbook.state_machine import (
+    MISSED_PAYMENTS_FOR_DEFAULT,
     TERMINAL_STATUSES,
     DelinquencyBucket,
     LoanStatus,
@@ -26,6 +29,12 @@ POPULATION_SIZE = 2_000
 POPULATION_SEED = 42
 ORIGINATION_MONTH = date(2020, 1, 1)
 AS_OF_MONTH = date(2026, 1, 1)
+
+MAX_ACTIVE_MONTHS_PAST_MATURITY = MISSED_PAYMENTS_FOR_DEFAULT - 1
+
+
+def months_between(earlier: date, later: date) -> int:
+    return (later.year - earlier.year) * MONTHS_PER_YEAR + later.month - earlier.month
 
 
 @pytest.fixture(scope="module")
@@ -182,6 +191,158 @@ class TestDefaultAndRecovery:
                     assert row.actual_payment_cents == 0
                 if row.loan_status == LoanStatus.DEFAULTED:
                     defaulted = True
+
+
+def three_month_loan() -> Loan:
+    principal_cents = 90_000
+    interest_rate = 0.12
+    term_months = 3
+    return Loan(
+        loan_id="L-MATURED",
+        borrower_id="B-MATURED",
+        product_type=PERSONAL_LOAN_PRODUCT_TYPE,
+        origination_month=date(2022, 1, 1),
+        principal_cents=principal_cents,
+        term_months=term_months,
+        interest_rate=interest_rate,
+        monthly_payment_cents=monthly_payment_cents(principal_cents, interest_rate, term_months),
+        score_band="prime",
+    )
+
+
+def forcing_calibration(roll_probabilities: dict[str, dict[str, float]]) -> Calibration:
+    """Calibration with 0/1 hazards so the simulated path is exact, not sampled."""
+    band_names = [band.name for band in SCORE_BANDS]
+    return Calibration(
+        monthly_delinquency_entry_hazard_by_band=dict.fromkeys(band_names, 1.0),
+        monthly_prepayment_rate_by_band=dict.fromkeys(band_names, 0.0),
+        delinquent_roll_probabilities=roll_probabilities,
+    )
+
+
+class TestPostMaturityResolution:
+    """Matured loans with arrears must resolve: cure in full or roll deeper monthly.
+
+    The rule (ADR-0002): past maturity nothing new comes due, but the unpaid
+    arrears age 30 more days each month, so the bucket deepens every month the
+    borrower fails to cure — 90+ that fails to cure defaults. A loan therefore
+    never stays ACTIVE more than MAX_ACTIVE_MONTHS_PAST_MATURITY months past
+    maturity, and reaches a terminal state within that bound plus the recovery
+    lag.
+    """
+
+    def simulate_forced(
+        self, roll_probabilities: dict[str, dict[str, float]]
+    ) -> tuple[Loan, list[MonthlyPerformance]]:
+        loan = three_month_loan()
+        calibration = forcing_calibration(roll_probabilities)
+        rows = simulate_loan_performance(
+            loan, date(2023, 6, 1), calibration, np.random.default_rng(POPULATION_SEED)
+        )
+        return loan, rows
+
+    def test_matured_delinquent_loan_rolls_deeper_monthly_to_default(self) -> None:
+        stay_until_maturity = {"cure": 0.0, "stay": 1.0, "roll_deeper": 0.0}
+        loan, rows = self.simulate_forced(
+            {
+                "dpd_30": stay_until_maturity,
+                "dpd_60": stay_until_maturity,
+                "dpd_90_plus": stay_until_maturity,
+            }
+        )
+        assert [row.delinquency_bucket for row in rows[:6]] == [
+            DelinquencyBucket.DPD_30,
+            DelinquencyBucket.DPD_30,
+            DelinquencyBucket.DPD_30,
+            DelinquencyBucket.DPD_60,
+            DelinquencyBucket.DPD_90_PLUS,
+            DelinquencyBucket.DEFAULT,
+        ]
+        default_row = rows[5]
+        assert default_row.loan_status == LoanStatus.DEFAULTED
+        assert default_row.period == loan.term_months + MAX_ACTIVE_MONTHS_PAST_MATURITY
+        assert rows[-1].loan_status == LoanStatus.RECOVERY_COMPLETE
+        assert rows[-1].period == default_row.period + default_calibration().recovery_lag_months
+
+    def test_post_maturity_aging_months_move_no_money(self) -> None:
+        stay_until_maturity = {"cure": 0.0, "stay": 1.0, "roll_deeper": 0.0}
+        loan, rows = self.simulate_forced(
+            {
+                "dpd_30": stay_until_maturity,
+                "dpd_60": stay_until_maturity,
+                "dpd_90_plus": stay_until_maturity,
+            }
+        )
+        aging_rows = [
+            row
+            for row in rows
+            if row.period > loan.term_months and row.loan_status == LoanStatus.ACTIVE
+        ]
+        assert aging_rows
+        for row in aging_rows:
+            assert row.actual_payment_cents == 0
+            assert row.scheduled_payment_cents == 0
+            assert row.ending_balance_cents == row.beginning_balance_cents
+
+    def test_matured_delinquent_loan_cures_in_full_and_pays_off(self) -> None:
+        loan, rows = self.simulate_forced(
+            {
+                "dpd_30": {"cure": 0.0, "stay": 1.0, "roll_deeper": 0.0},
+                "dpd_60": {"cure": 1.0, "stay": 0.0, "roll_deeper": 0.0},
+                "dpd_90_plus": {"cure": 1.0, "stay": 0.0, "roll_deeper": 0.0},
+            }
+        )
+        final_row = rows[-1]
+        assert final_row.loan_status == LoanStatus.PAID_OFF
+        assert final_row.period == loan.term_months + 2
+        assert final_row.delinquency_bucket == DelinquencyBucket.CURRENT
+        assert final_row.ending_balance_cents == 0
+
+    def test_loan_entering_maturity_at_90_plus_defaults_within_one_month(self) -> None:
+        always_roll_deeper = {"cure": 0.0, "stay": 0.0, "roll_deeper": 1.0}
+        loan, rows = self.simulate_forced(
+            {
+                "dpd_30": always_roll_deeper,
+                "dpd_60": always_roll_deeper,
+                "dpd_90_plus": always_roll_deeper,
+            }
+        )
+        maturity_row = rows[loan.term_months - 1]
+        assert maturity_row.delinquency_bucket == DelinquencyBucket.DPD_90_PLUS
+        assert maturity_row.loan_status == LoanStatus.ACTIVE
+        default_row = rows[loan.term_months]
+        assert default_row.loan_status == LoanStatus.DEFAULTED
+        assert default_row.period == loan.term_months + 1
+        assert default_row.principal_writeoff_cents == loan.principal_cents
+        assert rows[-1].loan_status == LoanStatus.RECOVERY_COMPLETE
+        assert rows[-1].period == loan.term_months + 1 + default_calibration().recovery_lag_months
+
+    def test_no_loan_remains_active_beyond_the_bound_past_maturity(self, population) -> None:
+        for loan, rows in population:
+            for row in rows:
+                if row.loan_status == LoanStatus.ACTIVE:
+                    assert row.period <= loan.term_months + MAX_ACTIVE_MONTHS_PAST_MATURITY
+
+    def test_every_fully_observed_loan_reaches_a_terminal_state(self, population) -> None:
+        terminal_horizon_months = (
+            MAX_ACTIVE_MONTHS_PAST_MATURITY + default_calibration().recovery_lag_months
+        )
+        fully_observed = [
+            (loan, rows)
+            for loan, rows in population
+            if months_between(loan.origination_month, AS_OF_MONTH)
+            >= loan.term_months + terminal_horizon_months
+        ]
+        assert fully_observed
+        for _, rows in fully_observed:
+            assert rows[-1].loan_status in TERMINAL_STATUSES
+
+    def test_population_exercises_post_maturity_default(self, population) -> None:
+        assert any(
+            row.principal_writeoff_cents > 0 and row.period > loan.term_months
+            for loan, rows in population
+            for row in rows
+        )
 
 
 class TestReproducibility:

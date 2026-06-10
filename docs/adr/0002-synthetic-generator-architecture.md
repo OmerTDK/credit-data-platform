@@ -32,6 +32,17 @@ rates**, simulated loan by loan, month by month:
   cure to current, default absorbing) is an explicit table in
   `state_machine.py`; the simulator validates every emitted transition
   against it, so an illegal move is a crash, not a data point.
+- **Post-maturity resolution.** Past maturity nothing new comes due, but the
+  unpaid arrears age 30 more days each month — days past due accrue with
+  calendar time on a matured balance, so the delinquency clock cannot freeze.
+  Each month a matured delinquent loan either cures in full (at its bucket's
+  cure probability) or rolls one bucket deeper; 90+ that fails to cure
+  defaults. Hard bounds follow: a loan never stays active more than 3 months
+  past maturity (worst case enters the post-maturity window at 30 dpd and
+  rolls 30 → 60 → 90+ → default), and reaches a terminal state within
+  3 + `recovery_lag_months` (= 9 with the default calibration) months past
+  maturity. Without this rule, a loan delinquent at maturity could linger
+  active indefinitely waiting on a cure draw and could never default.
 - Monthly hazards (delinquency entry, cure/stay/roll, prepayment SMM) come
   from `calibration.py`, anchored to published statistics
   (docs/calibration-sources.md). Lifetime outcomes *emerge* from monthly
