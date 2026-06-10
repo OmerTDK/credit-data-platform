@@ -50,7 +50,7 @@ LEGAL_BUCKET_TRANSITIONS: dict[DelinquencyBucket, frozenset[DelinquencyBucket]] 
     DelinquencyBucket.DPD_90_PLUS: frozenset(
         {DelinquencyBucket.CURRENT, DelinquencyBucket.DPD_90_PLUS, DelinquencyBucket.DEFAULT}
     ),
-    DelinquencyBucket.DEFAULT: frozenset(),
+    DelinquencyBucket.DEFAULT: frozenset({DelinquencyBucket.DEFAULT}),
 }
 
 TERMINAL_STATUSES = frozenset({LoanStatus.PAID_OFF, LoanStatus.RECOVERY_COMPLETE})
@@ -62,7 +62,8 @@ def validate_bucket_transition(
     """Raise IllegalTransitionError unless from_bucket -> to_bucket is legal.
 
     Legal moves are: stay in place, roll exactly one bucket deeper, or cure
-    back to current by paying all arrears. Default is absorbing.
+    back to current by paying all arrears. Default is absorbing: it only
+    transitions to itself (recovery-flow rows keep the default bucket).
     """
     if to_bucket not in LEGAL_BUCKET_TRANSITIONS[from_bucket]:
         raise IllegalTransitionError(

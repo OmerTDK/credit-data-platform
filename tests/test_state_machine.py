@@ -56,7 +56,7 @@ class TestLegalTransitions:
                     DelinquencyBucket.DEFAULT,
                 }
             ),
-            DelinquencyBucket.DEFAULT: frozenset(),
+            DelinquencyBucket.DEFAULT: frozenset({DelinquencyBucket.DEFAULT}),
         } == LEGAL_BUCKET_TRANSITIONS
 
     @pytest.mark.parametrize(
@@ -68,7 +68,7 @@ class TestLegalTransitions:
             (DelinquencyBucket.DPD_60, DelinquencyBucket.DPD_30),
             (DelinquencyBucket.DPD_90_PLUS, DelinquencyBucket.DPD_60),
             (DelinquencyBucket.DEFAULT, DelinquencyBucket.CURRENT),
-            (DelinquencyBucket.DEFAULT, DelinquencyBucket.DEFAULT),
+            (DelinquencyBucket.DEFAULT, DelinquencyBucket.DPD_90_PLUS),
         ],
     )
     def test_illegal_transitions_are_rejected(
@@ -83,7 +83,9 @@ class TestLegalTransitions:
                 validate_bucket_transition(from_bucket, to_bucket)
 
     def test_default_bucket_is_absorbing(self) -> None:
-        assert LEGAL_BUCKET_TRANSITIONS[DelinquencyBucket.DEFAULT] == frozenset()
+        assert LEGAL_BUCKET_TRANSITIONS[DelinquencyBucket.DEFAULT] == frozenset(
+            {DelinquencyBucket.DEFAULT}
+        )
 
 
 class TestBucketForMissedPayments:
