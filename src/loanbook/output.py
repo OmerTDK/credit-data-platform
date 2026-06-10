@@ -18,8 +18,9 @@ from loanbook.generate import LoanBook
 from loanbook.loans import Loan
 from loanbook.performance import MonthlyPerformance
 
-CENTS_PER_UNIT = 100
-MONEY_TYPE = pa.decimal128(12, 2)
+MONEY_DECIMAL_DIGITS = 12
+MONEY_SCALE = 2
+MONEY_TYPE = pa.decimal128(MONEY_DECIMAL_DIGITS, MONEY_SCALE)
 PARQUET_COMPRESSION = "zstd"
 
 LOANS_FILE = "loans/loans.parquet"
@@ -59,7 +60,7 @@ def _write_performance_partitions(rows: list[MonthlyPerformance], landing_dir: P
 
 def _money(cents_values: list[int]) -> pa.Array:
     return pa.array(
-        [Decimal(cents).scaleb(-2) for cents in cents_values],
+        [Decimal(cents).scaleb(-MONEY_SCALE) for cents in cents_values],
         type=MONEY_TYPE,
     )
 
