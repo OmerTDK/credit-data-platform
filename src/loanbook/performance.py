@@ -37,17 +37,31 @@ DELINQUENT_OUTCOMES = ("cure", "stay", "roll_deeper")
 
 @dataclass(frozen=True)
 class MonthlyPerformance:
+    """One account-month for any product.
+
+    Revolving-only fields are inert on amortizing rows: draw_cents is 0,
+    utilization is None, and interest_charged_cents equals interest_paid_cents
+    (installment interest is only recognized when its installment is paid;
+    card interest capitalizes into the balance whether paid or not). Every row
+    satisfies: ending = beginning + draw + interest_charged - interest_paid
+    - principal_paid - writeoff.
+    """
+
     loan_id: str
+    product_type: str
     period: int
     report_month: date
     beginning_balance_cents: int
+    draw_cents: int
     scheduled_payment_cents: int
     actual_payment_cents: int
     principal_paid_cents: int
     interest_paid_cents: int
+    interest_charged_cents: int
     ending_balance_cents: int
     principal_writeoff_cents: int
     recovery_cents: int
+    utilization: float | None
     delinquency_bucket: DelinquencyBucket
     loan_status: LoanStatus
     is_prepayment: bool
@@ -147,16 +161,20 @@ class _LoanSimulator:
         self._transition_to(DelinquencyBucket.CURRENT)
         return MonthlyPerformance(
             loan_id=self.loan.loan_id,
+            product_type=self.loan.product_type,
             period=period,
             report_month=add_months(self.loan.origination_month, period),
             beginning_balance_cents=beginning_balance,
+            draw_cents=0,
             scheduled_payment_cents=self._scheduled_payment_cents(due_now, newly_due),
             actual_payment_cents=beginning_balance + interest_cents,
             principal_paid_cents=beginning_balance,
             interest_paid_cents=interest_cents,
+            interest_charged_cents=interest_cents,
             ending_balance_cents=0,
             principal_writeoff_cents=0,
             recovery_cents=0,
+            utilization=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=True,
@@ -182,16 +200,20 @@ class _LoanSimulator:
         interest_paid = sum(entry.interest_cents for entry in paid_entries)
         return MonthlyPerformance(
             loan_id=self.loan.loan_id,
+            product_type=self.loan.product_type,
             period=period,
             report_month=add_months(self.loan.origination_month, period),
             beginning_balance_cents=beginning_balance,
+            draw_cents=0,
             scheduled_payment_cents=self._scheduled_payment_cents(due_now, newly_due),
             actual_payment_cents=principal_paid + interest_paid,
             principal_paid_cents=principal_paid,
             interest_paid_cents=interest_paid,
+            interest_charged_cents=interest_paid,
             ending_balance_cents=self._open_balance_cents(),
             principal_writeoff_cents=0,
             recovery_cents=0,
+            utilization=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=False,
@@ -206,16 +228,20 @@ class _LoanSimulator:
         self.writeoff_cents = beginning_balance
         return MonthlyPerformance(
             loan_id=self.loan.loan_id,
+            product_type=self.loan.product_type,
             period=period,
             report_month=add_months(self.loan.origination_month, period),
             beginning_balance_cents=beginning_balance,
+            draw_cents=0,
             scheduled_payment_cents=self._scheduled_payment_cents(due_now, newly_due),
             actual_payment_cents=0,
             principal_paid_cents=0,
             interest_paid_cents=0,
+            interest_charged_cents=0,
             ending_balance_cents=0,
             principal_writeoff_cents=beginning_balance,
             recovery_cents=0,
+            utilization=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=False,
@@ -243,16 +269,20 @@ class _LoanSimulator:
         self._transition_to(next_deeper_bucket(self.bucket))
         return MonthlyPerformance(
             loan_id=self.loan.loan_id,
+            product_type=self.loan.product_type,
             period=period,
             report_month=add_months(self.loan.origination_month, period),
             beginning_balance_cents=balance,
+            draw_cents=0,
             scheduled_payment_cents=0,
             actual_payment_cents=0,
             principal_paid_cents=0,
             interest_paid_cents=0,
+            interest_charged_cents=0,
             ending_balance_cents=balance,
             principal_writeoff_cents=0,
             recovery_cents=0,
+            utilization=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=False,
@@ -270,16 +300,20 @@ class _LoanSimulator:
         self._transition_to(DelinquencyBucket.DEFAULT)
         return MonthlyPerformance(
             loan_id=self.loan.loan_id,
+            product_type=self.loan.product_type,
             period=period,
             report_month=add_months(self.loan.origination_month, period),
             beginning_balance_cents=0,
+            draw_cents=0,
             scheduled_payment_cents=0,
             actual_payment_cents=0,
             principal_paid_cents=0,
             interest_paid_cents=0,
+            interest_charged_cents=0,
             ending_balance_cents=0,
             principal_writeoff_cents=0,
             recovery_cents=recovery_cents,
+            utilization=None,
             delinquency_bucket=self.bucket,
             loan_status=self.status,
             is_prepayment=False,

@@ -130,10 +130,10 @@ def _auto_loan_calibration() -> AmortizingProductCalibration:
         amount_log_sigma=0.35,
         amount_rounding_cents=10_000,
         monthly_delinquency_entry_hazard_by_band={
-            "subprime": 0.042,
-            "near_prime": 0.018,
-            "prime": 0.006,
-            "prime_plus": 0.0025,
+            "subprime": 0.030,
+            "near_prime": 0.013,
+            "prime": 0.005,
+            "prime_plus": 0.0022,
             "super_prime": 0.0010,
         },
         delinquent_roll_probabilities={
@@ -170,11 +170,11 @@ def _mortgage_calibration() -> AmortizingProductCalibration:
         amount_log_sigma=0.45,
         amount_rounding_cents=100_000,
         monthly_delinquency_entry_hazard_by_band={
-            "subprime": 0.012,
-            "near_prime": 0.005,
-            "prime": 0.002,
-            "prime_plus": 0.0008,
-            "super_prime": 0.0004,
+            "subprime": 0.009,
+            "near_prime": 0.004,
+            "prime": 0.0016,
+            "prime_plus": 0.0007,
+            "super_prime": 0.0003,
         },
         delinquent_roll_probabilities={
             "dpd_30": {"cure": 0.45, "stay": 0.30, "roll_deeper": 0.25},
