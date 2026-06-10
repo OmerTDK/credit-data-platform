@@ -15,7 +15,7 @@ from loanbook.amortization import monthly_payment_cents
 from loanbook.borrowers import generate_borrower
 from loanbook.calibration import SCORE_BANDS, Calibration, default_calibration
 from loanbook.loans import PERSONAL_LOAN_PRODUCT_TYPE, Loan, generate_loan
-from loanbook.months import MONTHS_PER_YEAR
+from loanbook.months import MONTHS_PER_YEAR, add_months
 from loanbook.performance import MonthlyPerformance, simulate_loan_performance
 from loanbook.state_machine import (
     MISSED_PAYMENTS_FOR_DEFAULT,
@@ -29,6 +29,8 @@ POPULATION_SIZE = 2_000
 POPULATION_SEED = 42
 ORIGINATION_MONTH = date(2020, 1, 1)
 AS_OF_MONTH = date(2026, 1, 1)
+CENSORED_POPULATION_SIZE = 300
+CENSORED_ORIGINATION_MONTH = date(2025, 6, 1)
 
 MAX_ACTIVE_MONTHS_PAST_MATURITY = MISSED_PAYMENTS_FOR_DEFAULT - 1
 
@@ -39,14 +41,29 @@ def months_between(earlier: date, later: date) -> int:
 
 @pytest.fixture(scope="module")
 def population() -> list[tuple[Loan, list[MonthlyPerformance]]]:
+    """Fully observable cohort plus a right-censored recent cohort.
+
+    The censored cohort originates too close to the as-of month for its loans
+    to all reach terminal states, so per-row invariants are exercised on
+    censored books too.
+    """
     calibration = default_calibration()
     rng = np.random.default_rng(POPULATION_SEED)
+    cohorts = [
+        (ORIGINATION_MONTH, POPULATION_SIZE),
+        (CENSORED_ORIGINATION_MONTH, CENSORED_POPULATION_SIZE),
+    ]
     simulated = []
-    for index in range(POPULATION_SIZE):
-        borrower = generate_borrower(f"B-{index:06d}", calibration, rng)
-        loan = generate_loan(f"L-{index:06d}", borrower, ORIGINATION_MONTH, calibration, rng)
-        rows = simulate_loan_performance(loan, AS_OF_MONTH, calibration, rng)
-        simulated.append((loan, rows))
+    entity_index = 0
+    for origination_month, cohort_size in cohorts:
+        for _ in range(cohort_size):
+            borrower = generate_borrower(f"B-{entity_index:06d}", calibration, rng)
+            loan = generate_loan(
+                f"L-{entity_index:06d}", borrower, origination_month, calibration, rng
+            )
+            rows = simulate_loan_performance(loan, AS_OF_MONTH, calibration, rng)
+            simulated.append((loan, rows))
+            entity_index += 1
     return simulated
 
 
@@ -59,8 +76,8 @@ class TestRowShape:
             assert [row.period for row in rows] == list(range(1, len(rows) + 1))
 
     def test_report_months_start_one_month_after_origination(self, population) -> None:
-        for _, rows in population:
-            assert rows[0].report_month == date(2020, 2, 1)
+        for loan, rows in population:
+            assert rows[0].report_month == add_months(loan.origination_month, 1)
 
     def test_no_report_month_beyond_as_of(self, population) -> None:
         for _, rows in population:
@@ -83,6 +100,15 @@ class TestTerminalStates:
         assert any(row.is_prepayment for row in all_rows)
         buckets_seen = {row.delinquency_bucket for row in all_rows}
         assert buckets_seen == set(DelinquencyBucket)
+
+    def test_population_exercises_right_censoring(self, population) -> None:
+        censored_books = [
+            rows
+            for loan, rows in population
+            if loan.origination_month == CENSORED_ORIGINATION_MONTH
+        ]
+        assert censored_books
+        assert any(rows[-1].loan_status == LoanStatus.ACTIVE for rows in censored_books)
 
 
 class TestBucketTransitions:
