@@ -18,9 +18,10 @@ from datetime import date
 import numpy as np
 
 from loanbook.amortization import AmortizationEntry, build_amortization_schedule
-from loanbook.calibration import Calibration
+from loanbook.calibration import AmortizingProductCalibration, Calibration
 from loanbook.loans import Loan
 from loanbook.months import add_months
+from loanbook.products import ProductType, is_revolving
 from loanbook.state_machine import (
     MISSED_PAYMENTS_FOR_DEFAULT,
     TERMINAL_STATUSES,
@@ -58,14 +59,21 @@ def simulate_loan_performance(
     calibration: Calibration,
     rng: np.random.Generator,
 ) -> list[MonthlyPerformance]:
-    """Simulate one loan month by month until termination or the as-of cutoff."""
-    return _LoanSimulator(loan, calibration, rng).run(as_of_month)
+    """Simulate one account month by month until termination or the as-of cutoff."""
+    if is_revolving(ProductType(loan.product_type)):
+        raise NotImplementedError(
+            f"Revolving simulation for {loan.loan_id} is not wired up yet; see loanbook.revolving."
+        )
+    product = calibration.amortizing_products[loan.product_type]
+    return _LoanSimulator(loan, product, rng).run(as_of_month)
 
 
 class _LoanSimulator:
-    def __init__(self, loan: Loan, calibration: Calibration, rng: np.random.Generator) -> None:
+    def __init__(
+        self, loan: Loan, product: AmortizingProductCalibration, rng: np.random.Generator
+    ) -> None:
         self.loan = loan
-        self.calibration = calibration
+        self.product = product
         self.rng = rng
         self.schedule = build_amortization_schedule(
             loan.principal_cents, loan.interest_rate, loan.term_months
@@ -108,17 +116,17 @@ class _LoanSimulator:
         return self._emit_payment_outcome(period, due_now, newly_due, installments_to_pay)
 
     def _draws_prepayment(self) -> bool:
-        smm = self.calibration.monthly_prepayment_rate_by_band[self.loan.score_band]
+        smm = self.product.monthly_prepayment_rate_by_band[self.loan.score_band]
         return self.rng.random() < smm
 
     def _current_installments_to_pay(self, newly_due: int) -> int:
-        hazard = self.calibration.monthly_delinquency_entry_hazard_by_band[self.loan.score_band]
+        hazard = self.product.monthly_delinquency_entry_hazard_by_band[self.loan.score_band]
         if self.rng.random() < hazard:
             return 0
         return newly_due
 
     def _delinquent_installments_to_pay(self, arrears_before: int, newly_due: int) -> int:
-        outcomes = self.calibration.delinquent_roll_probabilities[self.bucket.value]
+        outcomes = self.product.delinquent_roll_probabilities[self.bucket.value]
         outcome = str(
             self.rng.choice(
                 DELINQUENT_OUTCOMES,
@@ -223,7 +231,7 @@ class _LoanSimulator:
         cannot freeze on a matured balance (ADR-0002).
         """
         arrears = self.loan.term_months - self.installments_paid
-        cure_probability = self.calibration.delinquent_roll_probabilities[self.bucket.value]["cure"]
+        cure_probability = self.product.delinquent_roll_probabilities[self.bucket.value]["cure"]
         if self.rng.random() < cure_probability:
             return self._emit_payment_outcome(period, self.loan.term_months, 0, arrears)
         if self.bucket == DelinquencyBucket.DPD_90_PLUS:
@@ -252,11 +260,11 @@ class _LoanSimulator:
 
     def _step_defaulted_month(self, period: int) -> MonthlyPerformance:
         months_since_default = period - self.default_period
-        is_recovery_month = months_since_default == self.calibration.recovery_lag_months
+        is_recovery_month = months_since_default == self.product.recovery_lag_months
         recovery_cents = 0
         if is_recovery_month:
             recovery_cents = round(
-                self.writeoff_cents * self.calibration.recovery_rate_on_defaulted_balance
+                self.writeoff_cents * self.product.recovery_rate_on_defaulted_balance
             )
             self.status = LoanStatus.RECOVERY_COMPLETE
         self._transition_to(DelinquencyBucket.DEFAULT)

@@ -10,6 +10,7 @@ from loanbook.calibration import Calibration, default_calibration
 from loanbook.loans import Loan, generate_loan
 from loanbook.months import add_months
 from loanbook.performance import MonthlyPerformance, simulate_loan_performance
+from loanbook.products import ProductType
 
 DEFAULT_SEED = 42
 DEFAULT_COHORT_COUNT = 24
@@ -81,7 +82,12 @@ def generate_loan_book(config: GeneratorConfig, calibration: Calibration | None 
         for _ in range(config.loans_per_cohort):
             borrower = generate_borrower(f"B-{entity_index:06d}", calibration, rng)
             loan = generate_loan(
-                f"L-{entity_index:06d}", borrower, origination_month, calibration, rng
+                f"L-{entity_index:06d}",
+                borrower,
+                ProductType.PERSONAL_LOAN,
+                origination_month,
+                calibration,
+                rng,
             )
             performance_rows = simulate_loan_performance(loan, config.as_of_month, calibration, rng)
             book.borrowers.append(borrower)

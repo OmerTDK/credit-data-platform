@@ -5,6 +5,7 @@ fixed-seed population large enough to exercise prepayment, every delinquency
 bucket, cure, default, and the recovery flow.
 """
 
+from dataclasses import replace
 from datetime import date
 from itertools import pairwise
 
@@ -14,9 +15,10 @@ import pytest
 from loanbook.amortization import monthly_payment_cents
 from loanbook.borrowers import generate_borrower
 from loanbook.calibration import SCORE_BANDS, Calibration, default_calibration
-from loanbook.loans import PERSONAL_LOAN_PRODUCT_TYPE, Loan, generate_loan
+from loanbook.loans import Loan, generate_loan
 from loanbook.months import MONTHS_PER_YEAR, add_months
 from loanbook.performance import MonthlyPerformance, simulate_loan_performance
+from loanbook.products import ProductType
 from loanbook.state_machine import (
     MISSED_PAYMENTS_FOR_DEFAULT,
     TERMINAL_STATUSES,
@@ -33,6 +35,8 @@ CENSORED_POPULATION_SIZE = 300
 CENSORED_ORIGINATION_MONTH = date(2025, 6, 1)
 
 MAX_ACTIVE_MONTHS_PAST_MATURITY = MISSED_PAYMENTS_FOR_DEFAULT - 1
+
+PERSONAL_LOAN_CALIBRATION = default_calibration().amortizing_products[ProductType.PERSONAL_LOAN]
 
 
 def months_between(earlier: date, later: date) -> int:
@@ -59,7 +63,12 @@ def population() -> list[tuple[Loan, list[MonthlyPerformance]]]:
         for _ in range(cohort_size):
             borrower = generate_borrower(f"B-{entity_index:06d}", calibration, rng)
             loan = generate_loan(
-                f"L-{entity_index:06d}", borrower, origination_month, calibration, rng
+                f"L-{entity_index:06d}",
+                borrower,
+                ProductType.PERSONAL_LOAN,
+                origination_month,
+                calibration,
+                rng,
             )
             rows = simulate_loan_performance(loan, AS_OF_MONTH, calibration, rng)
             simulated.append((loan, rows))
@@ -194,7 +203,6 @@ class TestDefaultAndRecovery:
             assert len(writeoff_rows) <= 1
 
     def test_recovery_arrives_on_schedule_and_completes_the_loan(self, population) -> None:
-        calibration = default_calibration()
         for _, rows in population:
             recovery_rows = [row for row in rows if row.recovery_cents > 0]
             if not recovery_rows:
@@ -203,10 +211,13 @@ class TestDefaultAndRecovery:
             assert recovery_row is rows[-1]
             assert recovery_row.loan_status == LoanStatus.RECOVERY_COMPLETE
             default_row = next(row for row in rows if row.principal_writeoff_cents > 0)
-            assert recovery_row.period - default_row.period == calibration.recovery_lag_months
+            assert (
+                recovery_row.period - default_row.period
+                == PERSONAL_LOAN_CALIBRATION.recovery_lag_months
+            )
             assert recovery_row.recovery_cents == round(
                 default_row.principal_writeoff_cents
-                * calibration.recovery_rate_on_defaulted_balance
+                * PERSONAL_LOAN_CALIBRATION.recovery_rate_on_defaulted_balance
             )
 
     def test_no_payments_after_default(self, population) -> None:
@@ -240,7 +251,7 @@ class TestAggregateOutcomes:
 
     def cumulative_default_rate_by_band(self, population) -> dict[str, float]:
         terminal_horizon_months = (
-            MAX_ACTIVE_MONTHS_PAST_MATURITY + default_calibration().recovery_lag_months
+            MAX_ACTIVE_MONTHS_PAST_MATURITY + PERSONAL_LOAN_CALIBRATION.recovery_lag_months
         )
         loan_count_by_band: dict[str, int] = dict.fromkeys(SCORE_BANDS_BEST_TO_WORST, 0)
         default_count_by_band: dict[str, int] = dict.fromkeys(SCORE_BANDS_BEST_TO_WORST, 0)
@@ -297,12 +308,13 @@ def three_month_loan() -> Loan:
     return Loan(
         loan_id="L-MATURED",
         borrower_id="B-MATURED",
-        product_type=PERSONAL_LOAN_PRODUCT_TYPE,
+        product_type=ProductType.PERSONAL_LOAN.value,
         origination_month=date(2022, 1, 1),
         principal_cents=principal_cents,
         term_months=term_months,
         interest_rate=interest_rate,
         monthly_payment_cents=monthly_payment_cents(principal_cents, interest_rate, term_months),
+        credit_limit_cents=None,
         score_band="prime",
     )
 
@@ -310,10 +322,19 @@ def three_month_loan() -> Loan:
 def forcing_calibration(roll_probabilities: dict[str, dict[str, float]]) -> Calibration:
     """Calibration with 0/1 hazards so the simulated path is exact, not sampled."""
     band_names = [band.name for band in SCORE_BANDS]
-    return Calibration(
+    default = default_calibration()
+    forced_personal_loan = replace(
+        default.amortizing_products[ProductType.PERSONAL_LOAN],
         monthly_delinquency_entry_hazard_by_band=dict.fromkeys(band_names, 1.0),
         monthly_prepayment_rate_by_band=dict.fromkeys(band_names, 0.0),
         delinquent_roll_probabilities=roll_probabilities,
+    )
+    return replace(
+        default,
+        amortizing_products={
+            **default.amortizing_products,
+            ProductType.PERSONAL_LOAN.value: forced_personal_loan,
+        },
     )
 
 
@@ -359,7 +380,7 @@ class TestPostMaturityResolution:
         assert default_row.loan_status == LoanStatus.DEFAULTED
         assert default_row.period == loan.term_months + MAX_ACTIVE_MONTHS_PAST_MATURITY
         assert rows[-1].loan_status == LoanStatus.RECOVERY_COMPLETE
-        assert rows[-1].period == default_row.period + default_calibration().recovery_lag_months
+        assert rows[-1].period == default_row.period + PERSONAL_LOAN_CALIBRATION.recovery_lag_months
 
     def test_post_maturity_aging_months_move_no_money(self) -> None:
         stay_until_maturity = {"cure": 0.0, "stay": 1.0, "roll_deeper": 0.0}
@@ -412,7 +433,9 @@ class TestPostMaturityResolution:
         assert default_row.period == loan.term_months + 1
         assert default_row.principal_writeoff_cents == loan.principal_cents
         assert rows[-1].loan_status == LoanStatus.RECOVERY_COMPLETE
-        assert rows[-1].period == loan.term_months + 1 + default_calibration().recovery_lag_months
+        assert rows[-1].period == (
+            loan.term_months + 1 + PERSONAL_LOAN_CALIBRATION.recovery_lag_months
+        )
 
     def test_no_loan_remains_active_beyond_the_bound_past_maturity(self, population) -> None:
         for loan, rows in population:
@@ -422,7 +445,7 @@ class TestPostMaturityResolution:
 
     def test_every_fully_observed_loan_reaches_a_terminal_state(self, population) -> None:
         terminal_horizon_months = (
-            MAX_ACTIVE_MONTHS_PAST_MATURITY + default_calibration().recovery_lag_months
+            MAX_ACTIVE_MONTHS_PAST_MATURITY + PERSONAL_LOAN_CALIBRATION.recovery_lag_months
         )
         fully_observed = [
             (loan, rows)
@@ -449,7 +472,14 @@ class TestReproducibility:
         def simulate(seed: int) -> list[MonthlyPerformance]:
             rng = np.random.default_rng(seed)
             borrower = generate_borrower("B-000000", calibration, rng)
-            loan = generate_loan("L-000000", borrower, ORIGINATION_MONTH, calibration, rng)
+            loan = generate_loan(
+                "L-000000",
+                borrower,
+                ProductType.PERSONAL_LOAN,
+                ORIGINATION_MONTH,
+                calibration,
+                rng,
+            )
             return simulate_loan_performance(loan, AS_OF_MONTH, calibration, rng)
 
         assert simulate(7) == simulate(7)
