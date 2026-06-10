@@ -125,10 +125,10 @@ def default_calibration() -> Calibration:
 def load_calibration_from_loan_performance_data(source_path: str) -> Calibration:
     """Fit a Calibration from loan-level performance data (Fannie Mae style).
 
-    Documented interface only: which public dataset to fit against (and
-    whether the fitting belongs in this repo or a notebook) is an open
-    question pending with Omer. No fitted calibration has been run, so this
-    deliberately refuses rather than pretending.
+    Empirical calibration is intentionally unimplemented; see
+    docs/calibration-sources.md for the planned data sources. No fitted
+    calibration has been run, so this deliberately refuses rather than
+    pretending.
 
     Args:
         source_path: Path to a loan-level performance extract.

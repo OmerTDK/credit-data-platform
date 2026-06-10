@@ -71,8 +71,8 @@ no dataframe layer needed between dataclasses and parquet.
 **Empirical calibration is a hook, not a feature.** Fitting hazards from
 public loan-performance data (Fannie Mae style) is a documented interface
 (`load_calibration_from_loan_performance_data`) that deliberately raises
-`NotImplementedError` — which dataset to fit and where the fitting lives is an
-open question pending with Omer. No fabricated "calibration that never ran".
+`NotImplementedError` — the planned data sources are listed in
+docs/calibration-sources.md. No fabricated "calibration that never ran".
 
 ## Alternatives considered
 

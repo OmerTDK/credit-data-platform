@@ -11,8 +11,8 @@ parameter:
 
 An empirical fit against loan-level public performance data (Fannie Mae
 single-family style, or the Kaggle LendingClub loan file) is a **documented
-open interface** — `load_calibration_from_loan_performance_data` — and is an
-open question pending with Omer. No fitted calibration has been run.
+open interface** — `load_calibration_from_loan_performance_data` — and is
+intentionally unimplemented. No fitted calibration has been run.
 
 ## Score bands — anchored
 
