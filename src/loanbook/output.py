@@ -58,9 +58,12 @@ def _write_performance_partitions(rows: list[MonthlyPerformance], landing_dir: P
     return written_files
 
 
-def _money(cents_values: list[int]) -> pa.Array:
+def _money(cents_values: list[int | None]) -> pa.Array:
     return pa.array(
-        [Decimal(cents).scaleb(-MONEY_SCALE) for cents in cents_values],
+        [
+            Decimal(cents).scaleb(-MONEY_SCALE) if cents is not None else None
+            for cents in cents_values
+        ],
         type=MONEY_TYPE,
     )
 
@@ -91,6 +94,7 @@ def _loans_table(loans: list[Loan]) -> pa.Table:
             "term_months": pa.array([loan.term_months for loan in loans], type=pa.int16()),
             "interest_rate": pa.array([loan.interest_rate for loan in loans], type=pa.float64()),
             "monthly_payment": _money([loan.monthly_payment_cents for loan in loans]),
+            "credit_limit": _money([loan.credit_limit_cents for loan in loans]),
             "score_band": pa.array([loan.score_band for loan in loans], type=pa.string()),
         }
     )
@@ -100,16 +104,20 @@ def _performance_table(rows: list[MonthlyPerformance]) -> pa.Table:
     return pa.table(
         {
             "loan_id": pa.array([row.loan_id for row in rows], type=pa.string()),
+            "product_type": pa.array([row.product_type for row in rows], type=pa.string()),
             "period": pa.array([row.period for row in rows], type=pa.int16()),
             "report_month": pa.array([row.report_month for row in rows], type=pa.date32()),
             "beginning_balance": _money([row.beginning_balance_cents for row in rows]),
+            "draw_amount": _money([row.draw_cents for row in rows]),
             "scheduled_payment": _money([row.scheduled_payment_cents for row in rows]),
             "actual_payment": _money([row.actual_payment_cents for row in rows]),
             "principal_paid": _money([row.principal_paid_cents for row in rows]),
             "interest_paid": _money([row.interest_paid_cents for row in rows]),
+            "interest_charged": _money([row.interest_charged_cents for row in rows]),
             "ending_balance": _money([row.ending_balance_cents for row in rows]),
             "principal_writeoff": _money([row.principal_writeoff_cents for row in rows]),
             "recovery_amount": _money([row.recovery_cents for row in rows]),
+            "utilization": pa.array([row.utilization for row in rows], type=pa.float64()),
             "delinquency_bucket": pa.array(
                 [row.delinquency_bucket.value for row in rows], type=pa.string()
             ),

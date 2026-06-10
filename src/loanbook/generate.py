@@ -5,7 +5,7 @@ from datetime import date
 
 import numpy as np
 
-from loanbook.borrowers import Borrower, generate_borrower
+from loanbook.borrowers import Borrower, choose_weighted, generate_borrower
 from loanbook.calibration import Calibration, default_calibration
 from loanbook.loans import Loan, generate_loan
 from loanbook.months import add_months
@@ -67,10 +67,13 @@ class LoanBook:
 
 
 def generate_loan_book(config: GeneratorConfig, calibration: Calibration | None = None) -> LoanBook:
-    """Generate borrowers, loans, and monthly performance for the whole book.
+    """Generate borrowers, accounts, and monthly performance for the whole book.
 
-    A single seeded generator drives every draw in a fixed iteration order,
-    so the same config always produces an identical book.
+    Each account's product is drawn from the calibration's product mix, so the
+    book is card-heavy by count and mortgage-heavy by balance like the consumer
+    credit composition it is calibrated against. A single seeded generator
+    drives every draw in a fixed iteration order, so the same config always
+    produces an identical book.
     """
     if calibration is None:
         calibration = default_calibration()
@@ -81,10 +84,11 @@ def generate_loan_book(config: GeneratorConfig, calibration: Calibration | None 
         origination_month = add_months(config.start_month, cohort_index)
         for _ in range(config.loans_per_cohort):
             borrower = generate_borrower(f"B-{entity_index:06d}", calibration, rng)
+            product_type = ProductType(choose_weighted(rng, calibration.product_mix))
             loan = generate_loan(
                 f"L-{entity_index:06d}",
                 borrower,
-                ProductType.PERSONAL_LOAN,
+                product_type,
                 origination_month,
                 calibration,
                 rng,

@@ -42,6 +42,7 @@ EXPECTED_LOANS_SCHEMA = pa.schema(
         ("term_months", pa.int16()),
         ("interest_rate", pa.float64()),
         ("monthly_payment", MONEY),
+        ("credit_limit", MONEY),
         ("score_band", pa.string()),
     ]
 )
@@ -49,16 +50,20 @@ EXPECTED_LOANS_SCHEMA = pa.schema(
 EXPECTED_PERFORMANCE_SCHEMA = pa.schema(
     [
         ("loan_id", pa.string()),
+        ("product_type", pa.string()),
         ("period", pa.int16()),
         ("report_month", pa.date32()),
         ("beginning_balance", MONEY),
+        ("draw_amount", MONEY),
         ("scheduled_payment", MONEY),
         ("actual_payment", MONEY),
         ("principal_paid", MONEY),
         ("interest_paid", MONEY),
+        ("interest_charged", MONEY),
         ("ending_balance", MONEY),
         ("principal_writeoff", MONEY),
         ("recovery_amount", MONEY),
+        ("utilization", pa.float64()),
         ("delinquency_bucket", pa.string()),
         ("loan_status", pa.string()),
         ("is_prepayment", pa.bool_()),
@@ -124,6 +129,72 @@ class TestPinnedSchemas:
             )
 
 
+class TestProductFieldNullability:
+    def test_cards_carry_limits_and_no_amortizing_fields(self, landing_dir: Path) -> None:
+        violation_count = duckdb.sql(
+            f"""
+            SELECT COUNT(*)
+            FROM read_parquet('{landing_dir}/loans/loans.parquet')
+            WHERE product_type = 'credit_card'
+              AND (
+                credit_limit IS NULL
+                OR principal_amount IS NOT NULL
+                OR term_months IS NOT NULL
+                OR monthly_payment IS NOT NULL
+              )
+            """
+        ).fetchone()[0]
+        assert violation_count == 0
+
+    def test_amortizing_loans_carry_terms_and_no_credit_limit(self, landing_dir: Path) -> None:
+        violation_count = duckdb.sql(
+            f"""
+            SELECT COUNT(*)
+            FROM read_parquet('{landing_dir}/loans/loans.parquet')
+            WHERE product_type <> 'credit_card'
+              AND (
+                credit_limit IS NOT NULL
+                OR principal_amount IS NULL
+                OR term_months IS NULL
+                OR monthly_payment IS NULL
+              )
+            """
+        ).fetchone()[0]
+        assert violation_count == 0
+
+    def test_utilization_is_card_only(self, landing_dir: Path) -> None:
+        violation_count = duckdb.sql(
+            f"""
+            SELECT COUNT(*)
+            FROM read_parquet(
+                '{landing_dir}/monthly_performance/*/*.parquet', hive_partitioning = true
+            )
+            WHERE (product_type = 'credit_card' AND utilization IS NULL)
+               OR (product_type <> 'credit_card' AND utilization IS NOT NULL)
+            """
+        ).fetchone()[0]
+        assert violation_count == 0
+
+    def test_every_product_lands_in_both_tables(self, landing_dir: Path) -> None:
+        loan_products = {
+            row[0]
+            for row in duckdb.sql(
+                f"SELECT DISTINCT product_type "
+                f"FROM read_parquet('{landing_dir}/loans/loans.parquet')"
+            ).fetchall()
+        }
+        performance_products = {
+            row[0]
+            for row in duckdb.sql(
+                f"SELECT DISTINCT product_type FROM read_parquet("
+                f"'{landing_dir}/monthly_performance/*/*.parquet', hive_partitioning = true)"
+            ).fetchall()
+        }
+        expected = {"personal_loan", "auto_loan", "mortgage", "credit_card"}
+        assert loan_products == expected
+        assert performance_products == expected
+
+
 class TestDuckDbReadability:
     def test_loans_row_count_matches_book(self, landing_dir: Path) -> None:
         count = duckdb.sql(
@@ -146,7 +217,9 @@ class TestDuckDbReadability:
         ).fetchone()[0]
         assert column_type == "DECIMAL(12,2)"
 
-    def test_principal_conservation_survives_the_round_trip(self, landing_dir: Path) -> None:
+    def test_amortizing_principal_conservation_survives_the_round_trip(
+        self, landing_dir: Path
+    ) -> None:
         mismatches = duckdb.sql(
             f"""
             WITH performance_totals AS (
@@ -165,10 +238,28 @@ class TestDuckDbReadability:
             FROM read_parquet('{landing_dir}/loans/loans.parquet') AS loans
             JOIN performance_totals
                 ON loans.loan_id = performance_totals.loan_id
-            WHERE performance_totals.principal_paid_total
+            WHERE loans.product_type <> 'credit_card'
+              AND performance_totals.principal_paid_total
                 + performance_totals.writeoff_total
                 + performance_totals.final_balance
                 <> loans.principal_amount
+            """
+        ).fetchone()[0]
+        assert mismatches == 0
+
+    def test_universal_balance_identity_survives_the_round_trip(self, landing_dir: Path) -> None:
+        mismatches = duckdb.sql(
+            f"""
+            SELECT COUNT(*)
+            FROM read_parquet(
+                '{landing_dir}/monthly_performance/*/*.parquet', hive_partitioning = true
+            )
+            WHERE ending_balance <> beginning_balance
+                + draw_amount
+                + interest_charged
+                - interest_paid
+                - principal_paid
+                - principal_writeoff
             """
         ).fetchone()[0]
         assert mismatches == 0
