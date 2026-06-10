@@ -76,6 +76,8 @@ explicit one-line aliases are simpler and visible at the top of each model.
   with ADR-0001's deferral of everything BigQuery.
 - CI now generates the loan book (`make generate`, fixed seed, ~1.5 s) before
   the dbt steps, so `dbt build --select staging` exercises models and data
-  tests against real rows on every PR, and SQLFluff lints real model SQL.
+  tests against real rows on every PR. SQLFluff lints the staging model SQL
+  through the dbt templater independently of generation — it runs before
+  `make generate` and compiles the models without landing data.
 - Every future layer folder needs only a `+schema` line in
   `dbt_project.yml`; the override applies project-wide.
