@@ -76,6 +76,26 @@ class TestGenerateLoanBook:
                 as_of_month=date(2021, 12, 1),
             )
 
+    def test_rejects_as_of_inside_the_cohort_span(self) -> None:
+        with pytest.raises(ValueError, match="cohort"):
+            GeneratorConfig(
+                seed=1,
+                cohort_count=6,
+                loans_per_cohort=10,
+                start_month=date(2022, 1, 1),
+                as_of_month=date(2022, 3, 1),
+            )
+
+    def test_accepts_as_of_equal_to_the_last_cohort_month(self) -> None:
+        config = GeneratorConfig(
+            seed=1,
+            cohort_count=6,
+            loans_per_cohort=10,
+            start_month=date(2022, 1, 1),
+            as_of_month=date(2022, 6, 1),
+        )
+        assert config.as_of_month == date(2022, 6, 1)
+
     def test_same_config_generates_identical_books(self, small_book: LoanBook) -> None:
         config = GeneratorConfig(
             seed=42,

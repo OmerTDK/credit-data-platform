@@ -25,6 +25,15 @@ def _default_as_of_month(start_month: date, cohort_count: int) -> date:
 
 @dataclass(frozen=True)
 class GeneratorConfig:
+    """Book dimensions and observation cutoff.
+
+    Contract: as_of_month must be on or after the last cohort month, so every
+    configured cohort exists by the as-of date. A config whose as_of_month
+    falls inside the cohort span is rejected rather than silently truncating
+    cohorts. Loans originated in the as-of month itself have no closed
+    reporting period yet, so they carry no performance rows.
+    """
+
     seed: int
     cohort_count: int = DEFAULT_COHORT_COUNT
     loans_per_cohort: int = DEFAULT_LOANS_PER_COHORT
@@ -40,9 +49,12 @@ class GeneratorConfig:
             object.__setattr__(
                 self, "as_of_month", _default_as_of_month(self.start_month, self.cohort_count)
             )
-        if self.as_of_month <= self.start_month:
+        last_cohort_month = add_months(self.start_month, self.cohort_count - 1)
+        if self.as_of_month < last_cohort_month:
             raise ValueError(
-                f"as_of_month {self.as_of_month} must be after start_month {self.start_month}"
+                f"as_of_month {self.as_of_month} is inside the cohort span: the last of "
+                f"{self.cohort_count} cohorts originates {last_cohort_month}. as_of_month "
+                f"must be on or after the last cohort month."
             )
 
 
