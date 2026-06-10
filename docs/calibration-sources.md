@@ -50,11 +50,13 @@ the months between 90 and 180 days stay in the 90+ bucket.
   <https://www.occ.treas.gov/news-issuances/bulletins/2000/bulletin-2000-20.html>
 
 Applying the closed-end 120-day default to mortgages is a **stylized
-simplification**: real mortgage resolution runs through a foreclosure pipeline
-that takes far longer (GSE loan-performance data tracks D180 and
-foreclosure-specific outcomes). The longer "stay" probabilities in the
-mortgage roll matrix approximate that pipeline; the terminal threshold is not
-product-specific in this model.
+simplification** on two counts: the FFIEC policy itself prescribes a longer
+**180-day** charge-off time frame for open- and closed-end loans secured by
+one- to four-family residential real estate, and real mortgage resolution
+runs through a foreclosure pipeline that takes far longer still (GSE
+loan-performance data tracks D180 and foreclosure-specific outcomes). The
+longer "stay" probabilities in the mortgage roll matrix approximate that
+pipeline; the terminal threshold is not product-specific in this model.
 
 ### Borrower attributes — anchored region mix, stylized age/income
 
@@ -344,8 +346,9 @@ transactor share was used.
   parameters.
 
 Entry hazards and rolls are **stylized**; the 90+ bucket carries a high
-"stay" probability because an account spends up to three months at 90–180
-days before charge-off. Realized point-in-time 90+ DPD share of active cards
+"stay" probability because an account spends at least three months at 90–180
+days before the 180-day charge-off — only roll-deeper months advance the
+missed-payment count, so each "stay" month extends that dwell. Realized point-in-time 90+ DPD share of active cards
 in the default run: **1.34%** — below the anchor for the same young-book
 seasoning reason as mortgages (the anchor reflects a seasoned national
 portfolio). Realized charge-off rates after 84 months on book (test
