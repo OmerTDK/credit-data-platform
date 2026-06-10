@@ -16,9 +16,16 @@ from loanbook.output import write_loan_book
 
 DEFAULT_OUTPUT_DIR = "data/landing"
 DEFAULT_START_MONTH_TEXT = "2022-01"
+BYTES_PER_MEGABYTE = 1_000_000
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for the loanbook command-line interface.
+
+    Returns:
+        Parser with the `generate` subcommand and its options wired to the
+        generator defaults.
+    """
     parser = argparse.ArgumentParser(
         prog="loanbook",
         description="Seeded synthetic loan-book generator (personal loans).",
@@ -47,6 +54,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_generate(arguments: argparse.Namespace) -> int:
+    """Generate the loan book and write it to the parquet landing zone.
+
+    Args:
+        arguments: Parsed `generate` subcommand arguments.
+
+    Returns:
+        Process exit code: 0 on success.
+
+    Raises:
+        ValueError: If the parsed arguments form an invalid GeneratorConfig.
+    """
     config = GeneratorConfig(
         seed=arguments.seed,
         cohort_count=arguments.cohorts,
@@ -62,13 +80,24 @@ def run_generate(arguments: argparse.Namespace) -> int:
     print(f"loans: {len(book.loans)}")
     print(f"borrowers: {len(book.borrowers)}")
     print(f"monthly_performance: {len(book.monthly_performance)}")
-    print(f"files: {len(written_files)} ({total_bytes / 1_000_000:.1f} MB)")
+    print(f"files: {len(written_files)} ({total_bytes / BYTES_PER_MEGABYTE:.1f} MB)")
     print(f"seconds: {elapsed_seconds:.1f}")
     print(f"landing_dir: {arguments.output_dir}")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse arguments and dispatch to the requested command.
+
+    Args:
+        argv: Argument list to parse; None means sys.argv.
+
+    Returns:
+        Process exit code: 0 on success.
+
+    Raises:
+        ValueError: If the parsed command has no handler.
+    """
     arguments = build_parser().parse_args(argv)
     if arguments.command == "generate":
         return run_generate(arguments)
