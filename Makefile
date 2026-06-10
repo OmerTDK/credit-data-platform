@@ -37,7 +37,7 @@ dbt-build-staging: ## Build and test the staging layer against the local DuckDB 
 	mkdir -p data/local
 	DBT_PROFILES_DIR=. uv run dbt build --select staging
 
-ci: lint lint-sql test dbt-parse ## Run the full CI suite locally
+ci: lint lint-sql generate test dbt-parse dbt-build-staging ## Run the full CI suite locally
 
 docker-build: ## Build the project image
 	docker build -t credit-data-platform .
