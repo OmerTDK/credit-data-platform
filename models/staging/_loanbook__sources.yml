@@ -13,7 +13,10 @@ sources:
       external_location: "read_parquet('data/landing/{name}/*.parquet')"
     tables:
       - name: loans
-        description: One row per originated personal loan with its contractual terms.
+        description: >
+          One row per originated credit account across the four products
+          (personal loans, auto loans, mortgages, credit cards) with its
+          contractual terms.
       - name: borrowers
         description: One row per borrower with banded attributes and credit score.
       - name: monthly_performance

@@ -9,5 +9,6 @@ select
     cast(term_months as integer) as term_months,
     interest_rate,
     monthly_payment as monthly_payment_amount,
+    credit_limit as credit_limit_amount,
     score_band
 from {{ source('loanbook', 'loans') }}

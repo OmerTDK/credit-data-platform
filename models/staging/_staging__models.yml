@@ -46,8 +46,11 @@ models:
 
   - name: stg_loanbook__loan
     description: >
-      One row per originated personal loan: contractual terms as written at
-      origination, cleaned and typed from the landing zone.
+      One row per originated credit account across the four products:
+      contractual terms as written at origination, cleaned and typed from
+      the landing zone. Amortizing products carry principal, term, and
+      installment; credit cards carry a credit limit instead — the
+      product-conditional nullability is enforced by a singular test.
     columns:
       - name: loan_id
         description: Natural key of the loan.
@@ -63,32 +66,36 @@ models:
                 to: ref('stg_loanbook__borrower')
                 field: borrower_id
       - name: product_type
-        description: Credit product of the loan; Phase 1 generates personal loans only.
+        description: Credit product of the account.
         data_tests:
           - not_null
           - accepted_values:
               arguments:
-                values: [personal_loan]
+                values: [personal_loan, auto_loan, mortgage, credit_card]
       - name: origination_month
-        description: First day of the calendar month the loan was originated in.
+        description: First day of the calendar month the account was originated in.
         data_tests:
           - not_null
       - name: principal_amount
-        description: Originated principal in account currency (decimal, 2 dp).
-        data_tests:
-          - not_null
+        description: >
+          Originated principal in account currency (decimal, 2 dp).
+          Null for credit cards, which have no fixed principal.
       - name: term_months
-        description: Contractual term of the loan in months.
-        data_tests:
-          - not_null
+        description: >
+          Contractual term of the loan in months. Null for credit cards,
+          which are open-ended.
       - name: interest_rate
         description: Annual interest rate as a decimal (0.129 = 12.9% APR).
         data_tests:
           - not_null
       - name: monthly_payment_amount
-        description: Fixed monthly installment from the amortization schedule.
-        data_tests:
-          - not_null
+        description: >
+          Fixed monthly installment from the amortization schedule.
+          Null for credit cards, which pay a balance-dependent minimum.
+      - name: credit_limit_amount
+        description: >
+          Revolving credit limit in account currency (decimal, 2 dp).
+          Set for credit cards only; null for amortizing products.
       - name: score_band
         description: Borrower score band at origination, denormalized for pricing analysis.
         data_tests:
