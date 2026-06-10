@@ -28,7 +28,10 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="loanbook",
-        description="Seeded synthetic loan-book generator (personal loans).",
+        description=(
+            "Seeded synthetic credit-book generator "
+            "(personal loans, auto loans, mortgages, credit cards)."
+        ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     generate_parser = subparsers.add_parser(

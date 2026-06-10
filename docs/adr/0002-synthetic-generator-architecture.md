@@ -1,7 +1,9 @@
 # ADR-0002: Loan generator — explicit state machine with monthly hazard rates
 
 **Date:** 2026-06-10
-**Status:** Accepted
+**Status:** Accepted — extended by ADR-0004 (2026-06-10): multi-product
+extension (auto, mortgage, credit card) with per-product calibrations, a
+revolving simulator, and the single-schema decision.
 
 ## Context
 
