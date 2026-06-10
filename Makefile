@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install lint lint-sql test dbt-parse dbt-run dbt-test ci docker-build docker-test
+.PHONY: help install lint lint-sql test generate dbt-parse dbt-run dbt-test ci docker-build docker-test
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z][a-zA-Z0-9_-]*:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "%-16s %s\n", $$1, $$2}'
@@ -18,6 +18,9 @@ lint-sql: ## SQLFluff lint dbt SQL (duckdb dialect, dbt templater)
 
 test: ## Run the test suite
 	uv run pytest -v
+
+generate: ## Generate the synthetic loan book into data/landing
+	uv run python -m loanbook generate --seed 42 --cohorts 24 --loans-per-cohort 500
 
 dbt-parse: ## Validate that the dbt project parses
 	DBT_PROFILES_DIR=. uv run dbt parse
