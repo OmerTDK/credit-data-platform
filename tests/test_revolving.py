@@ -162,6 +162,16 @@ class TestForcedChargeOffPath:
         assert rows[0].draw_cents > 0
         assert all(row.draw_cents == 0 for row in rows[1:])
 
+    def test_payment_below_the_interest_charge_goes_entirely_to_interest(self, forced) -> None:
+        _, rows = forced
+        short_paying_rows = [
+            row for row in rows if row.actual_payment_cents < row.interest_charged_cents
+        ]
+        assert len(short_paying_rows) == 4
+        for row in short_paying_rows:
+            assert row.interest_paid_cents == row.actual_payment_cents
+            assert row.principal_paid_cents == 0
+
 
 class TestForcedTransactorPath:
     @pytest.fixture(scope="class")
@@ -296,6 +306,16 @@ class TestBalanceIntegrity:
                 assert row.actual_payment_cents == (
                     row.principal_paid_cents + row.interest_paid_cents
                 )
+
+    def test_interest_paid_never_exceeds_the_actual_payment(self, population) -> None:
+        for _, rows in population:
+            for row in rows:
+                assert row.interest_paid_cents <= row.actual_payment_cents
+
+    def test_principal_paid_is_never_negative(self, population) -> None:
+        for _, rows in population:
+            for row in rows:
+                assert row.principal_paid_cents >= 0
 
     def test_draws_never_push_the_balance_above_the_limit(self, population) -> None:
         for card, rows in population:
