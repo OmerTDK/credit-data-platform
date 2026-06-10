@@ -106,18 +106,26 @@ models:
 
   - name: stg_loanbook__monthly_performance
     description: >
-      One row per loan per month on book: payments, balances, delinquency
+      One row per account per month on book: payments, balances, delinquency
       bucket, and loan status emitted by the generator's state machine.
+      Card rows additionally carry draws, interest charged, and utilization.
       Grain is (loan_id, months_on_book), enforced by a singular test.
     columns:
       - name: loan_id
-        description: Natural key of the loan this performance row belongs to.
+        description: Natural key of the account this performance row belongs to.
         data_tests:
           - not_null
           - relationships:
               arguments:
                 to: ref('stg_loanbook__loan')
                 field: loan_id
+      - name: product_type
+        description: Credit product of the account, denormalized for per-product analysis.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [personal_loan, auto_loan, mortgage, credit_card]
       - name: months_on_book
         description: >
           1-based loan age in months; the row reports the month
@@ -129,11 +137,17 @@ models:
         data_tests:
           - not_null
       - name: beginning_balance_amount
-        description: Outstanding principal at the start of the month.
+        description: Outstanding balance at the start of the month.
+        data_tests:
+          - not_null
+      - name: draw_amount
+        description: New spending drawn on the account this month; zero for amortizing products.
         data_tests:
           - not_null
       - name: scheduled_payment_amount
-        description: Installments contractually due this month.
+        description: >
+          Amount contractually due this month: the fixed installment for
+          amortizing products, the minimum payment for cards.
         data_tests:
           - not_null
       - name: actual_payment_amount
@@ -148,8 +162,15 @@ models:
         description: Interest portion of the actual payment.
         data_tests:
           - not_null
+      - name: interest_charged_amount
+        description: >
+          Interest accrued on the account this month: capitalized into the
+          card balance for revolving credit, equal to interest paid for
+          amortizing products.
+        data_tests:
+          - not_null
       - name: ending_balance_amount
-        description: Outstanding principal at the end of the month.
+        description: Outstanding balance at the end of the month.
         data_tests:
           - not_null
       - name: principal_writeoff_amount
@@ -160,6 +181,11 @@ models:
         description: Post-default recovery received this month.
         data_tests:
           - not_null
+      - name: utilization_rate
+        description: >
+          Ending balance over credit limit as a decimal (0-1 scale). Set for
+          credit cards only; null for amortizing products — enforced by a
+          singular test.
       - name: delinquency_bucket
         description: Days-past-due bucket from the delinquency state machine.
         data_tests:
