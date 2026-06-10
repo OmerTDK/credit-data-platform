@@ -1,9 +1,11 @@
 """Delinquency state machine: explicit legal transitions, everything else rejected.
 
 Bucket semantics follow the New York Fed Consumer Credit Panel delinquency
-statuses (30/60/90+ days past due). Default at four missed monthly payments
-mirrors the FFIEC Uniform Retail Credit Classification policy: closed-end
-retail loans are charged off at 120 days past due. Sources in
+statuses (30/60/90+ days past due). Default thresholds mirror the FFIEC
+Uniform Retail Credit Classification policy: closed-end retail loans are
+charged off at 120 days past due (4 missed monthly payments) and open-end
+retail credit at 180 days past due (6 missed minimum payments, the months
+between 90 and 180 days staying in the 90+ bucket). Sources in
 docs/calibration-sources.md.
 """
 
@@ -30,6 +32,7 @@ class IllegalTransitionError(Exception):
 
 
 MISSED_PAYMENTS_FOR_DEFAULT = 4
+MISSED_PAYMENTS_FOR_CHARGE_OFF_REVOLVING = 6
 
 _BUCKET_BY_MISSED_PAYMENTS = (
     DelinquencyBucket.CURRENT,
@@ -38,6 +41,7 @@ _BUCKET_BY_MISSED_PAYMENTS = (
     DelinquencyBucket.DPD_90_PLUS,
     DelinquencyBucket.DEFAULT,
 )
+_DEEPEST_PRE_DEFAULT_INDEX = len(_BUCKET_BY_MISSED_PAYMENTS) - 2
 
 LEGAL_BUCKET_TRANSITIONS: dict[DelinquencyBucket, frozenset[DelinquencyBucket]] = {
     DelinquencyBucket.CURRENT: frozenset({DelinquencyBucket.CURRENT, DelinquencyBucket.DPD_30}),
@@ -82,11 +86,23 @@ def next_deeper_bucket(bucket: DelinquencyBucket) -> DelinquencyBucket:
     return _BUCKET_BY_MISSED_PAYMENTS[_BUCKET_BY_MISSED_PAYMENTS.index(bucket) + 1]
 
 
-def bucket_for_missed_payments(missed_payments: int) -> DelinquencyBucket:
-    """Map a count of consecutive missed monthly payments to its bucket."""
-    if missed_payments < 0 or missed_payments > MISSED_PAYMENTS_FOR_DEFAULT:
+def bucket_for_missed_payments(
+    missed_payments: int,
+    missed_payments_for_default: int = MISSED_PAYMENTS_FOR_DEFAULT,
+) -> DelinquencyBucket:
+    """Map a count of consecutive missed monthly payments to its bucket.
+
+    The default threshold is product-dependent: 4 missed payments for
+    closed-end loans (120 days, FFIEC) and 6 for revolving credit (180 days,
+    FFIEC). Counts between the 90+ stage and the threshold stay in the 90+
+    bucket — days past due keep accruing but there is no deeper pre-default
+    stage to move to.
+    """
+    if missed_payments < 0 or missed_payments > missed_payments_for_default:
         raise ValueError(
-            f"missed_payments must be between 0 and {MISSED_PAYMENTS_FOR_DEFAULT}, "
+            f"missed_payments must be between 0 and {missed_payments_for_default}, "
             f"got {missed_payments}"
         )
-    return _BUCKET_BY_MISSED_PAYMENTS[missed_payments]
+    if missed_payments == missed_payments_for_default:
+        return DelinquencyBucket.DEFAULT
+    return _BUCKET_BY_MISSED_PAYMENTS[min(missed_payments, _DEEPEST_PRE_DEFAULT_INDEX)]

@@ -4,6 +4,7 @@ import pytest
 
 from loanbook.state_machine import (
     LEGAL_BUCKET_TRANSITIONS,
+    MISSED_PAYMENTS_FOR_CHARGE_OFF_REVOLVING,
     MISSED_PAYMENTS_FOR_DEFAULT,
     TERMINAL_STATUSES,
     DelinquencyBucket,
@@ -115,6 +116,44 @@ class TestBucketForMissedPayments:
     def test_negative_count_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="missed_payments"):
             bucket_for_missed_payments(-1)
+
+
+class TestRevolvingChargeOffThreshold:
+    """Open-end retail credit charges off at 180 days past due (FFIEC policy),
+    so a card defaults at 6 missed minimum payments instead of 4; the months
+    between 90 and 180 days stay in the dpd_90_plus bucket."""
+
+    def test_revolving_charge_off_threshold_is_ffiec_180_days(self) -> None:
+        assert MISSED_PAYMENTS_FOR_CHARGE_OFF_REVOLVING == 6
+
+    @pytest.mark.parametrize(
+        ("missed_payments", "expected_bucket"),
+        [
+            (0, DelinquencyBucket.CURRENT),
+            (1, DelinquencyBucket.DPD_30),
+            (2, DelinquencyBucket.DPD_60),
+            (3, DelinquencyBucket.DPD_90_PLUS),
+            (4, DelinquencyBucket.DPD_90_PLUS),
+            (5, DelinquencyBucket.DPD_90_PLUS),
+            (6, DelinquencyBucket.DEFAULT),
+        ],
+    )
+    def test_maps_missed_minimums_to_bucket_under_the_revolving_threshold(
+        self, missed_payments: int, expected_bucket: DelinquencyBucket
+    ) -> None:
+        bucket = bucket_for_missed_payments(
+            missed_payments, missed_payments_for_default=MISSED_PAYMENTS_FOR_CHARGE_OFF_REVOLVING
+        )
+        assert bucket == expected_bucket
+
+    def test_counts_beyond_the_revolving_threshold_are_rejected(self) -> None:
+        with pytest.raises(ValueError, match="missed_payments"):
+            bucket_for_missed_payments(
+                7, missed_payments_for_default=MISSED_PAYMENTS_FOR_CHARGE_OFF_REVOLVING
+            )
+
+    def test_aging_within_90_plus_is_a_legal_stay_transition(self) -> None:
+        validate_bucket_transition(DelinquencyBucket.DPD_90_PLUS, DelinquencyBucket.DPD_90_PLUS)
 
 
 class TestNextDeeperBucket:
