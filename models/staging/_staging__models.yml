@@ -1,0 +1,206 @@
+version: 2
+
+models:
+  - name: stg_loanbook__borrower
+    description: >
+      One row per borrower: banded demographic attributes and the credit score
+      drawn within the score band, cleaned and typed from the landing zone.
+    columns:
+      - name: borrower_id
+        description: Natural key of the borrower.
+        data_tests:
+          - unique
+          - not_null
+      - name: age_band
+        description: Borrower age band at origination.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["18-24", "25-34", "35-44", "45-54", "55-64", "65+"]
+      - name: income_band
+        description: Annual income band at origination.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [under_25k, 25k_to_50k, 50k_to_75k, 75k_to_100k, over_100k]
+      - name: region
+        description: US census region of the borrower.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [northeast, midwest, south, west]
+      - name: score_band
+        description: Credit score band the borrower was drawn into.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [subprime, near_prime, prime, prime_plus, super_prime]
+      - name: credit_score
+        description: Credit score drawn uniformly within the score band (300-850).
+        data_tests:
+          - not_null
+
+  - name: stg_loanbook__loan
+    description: >
+      One row per originated credit account across the four products:
+      contractual terms as written at origination, cleaned and typed from
+      the landing zone. Amortizing products carry principal, term, and
+      installment; credit cards carry a credit limit instead — the
+      product-conditional nullability is enforced by a singular test.
+    columns:
+      - name: loan_id
+        description: Natural key of the loan.
+        data_tests:
+          - unique
+          - not_null
+      - name: borrower_id
+        description: Natural key of the borrower the loan was originated for.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_loanbook__borrower')
+                field: borrower_id
+      - name: product_type
+        description: Credit product of the account.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [personal_loan, auto_loan, mortgage, credit_card]
+      - name: origination_month
+        description: First day of the calendar month the account was originated in.
+        data_tests:
+          - not_null
+      - name: principal_amount
+        description: >
+          Originated principal in account currency (decimal, 2 dp).
+          Null for credit cards, which have no fixed principal.
+      - name: term_months
+        description: >
+          Contractual term of the loan in months. Null for credit cards,
+          which are open-ended.
+      - name: interest_rate
+        description: Annual interest rate as a decimal (0.129 = 12.9% APR).
+        data_tests:
+          - not_null
+      - name: monthly_payment_amount
+        description: >
+          Fixed monthly installment from the amortization schedule.
+          Null for credit cards, which pay a balance-dependent minimum.
+      - name: credit_limit_amount
+        description: >
+          Revolving credit limit in account currency (decimal, 2 dp).
+          Set for credit cards only; null for amortizing products.
+      - name: score_band
+        description: Borrower score band at origination, denormalized for pricing analysis.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [subprime, near_prime, prime, prime_plus, super_prime]
+
+  - name: stg_loanbook__monthly_performance
+    description: >
+      One row per account per month on book: payments, balances, delinquency
+      bucket, and loan status emitted by the generator's state machine.
+      Card rows additionally carry draws, interest charged, and utilization.
+      Grain is (loan_id, months_on_book), enforced by a singular test.
+    columns:
+      - name: loan_id
+        description: Natural key of the account this performance row belongs to.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_loanbook__loan')
+                field: loan_id
+      - name: product_type
+        description: Credit product of the account, denormalized for per-product analysis.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [personal_loan, auto_loan, mortgage, credit_card]
+      - name: months_on_book
+        description: >
+          1-based loan age in months; the row reports the month
+          origination_month + months_on_book.
+        data_tests:
+          - not_null
+      - name: report_month
+        description: First day of the calendar month this row reports on.
+        data_tests:
+          - not_null
+      - name: beginning_balance_amount
+        description: Outstanding balance at the start of the month.
+        data_tests:
+          - not_null
+      - name: draw_amount
+        description: New spending drawn on the account this month; zero for amortizing products.
+        data_tests:
+          - not_null
+      - name: scheduled_payment_amount
+        description: >
+          Amount contractually due this month: the fixed installment for
+          amortizing products, the minimum payment for cards.
+        data_tests:
+          - not_null
+      - name: actual_payment_amount
+        description: Amount actually paid this month.
+        data_tests:
+          - not_null
+      - name: principal_paid_amount
+        description: Principal portion of the actual payment.
+        data_tests:
+          - not_null
+      - name: interest_paid_amount
+        description: Interest portion of the actual payment.
+        data_tests:
+          - not_null
+      - name: interest_charged_amount
+        description: >
+          Interest accrued on the account this month: capitalized into the
+          card balance for revolving credit, equal to interest paid for
+          amortizing products.
+        data_tests:
+          - not_null
+      - name: ending_balance_amount
+        description: Outstanding balance at the end of the month.
+        data_tests:
+          - not_null
+      - name: principal_writeoff_amount
+        description: Principal written off this month; non-zero only on default.
+        data_tests:
+          - not_null
+      - name: recovery_amount
+        description: Post-default recovery received this month.
+        data_tests:
+          - not_null
+      - name: utilization_rate
+        description: >
+          Ending balance over credit limit as a decimal (0-1 scale). Set for
+          credit cards only; null for amortizing products — enforced by a
+          singular test.
+      - name: delinquency_bucket
+        description: Days-past-due bucket from the delinquency state machine.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [current, dpd_30, dpd_60, dpd_90_plus, default]
+      - name: loan_status
+        description: Lifecycle status of the loan as of this month.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [active, paid_off, defaulted, recovery_complete]
+      - name: is_prepayment
+        description: Whether the loan terminated this month by voluntary full prepayment.
+        data_tests:
+          - not_null

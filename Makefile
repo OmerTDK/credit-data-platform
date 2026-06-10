@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install lint lint-sql test generate dbt-parse dbt-run dbt-test ci docker-build docker-test
+.PHONY: help install lint lint-sql test generate dbt-parse dbt-run dbt-test dbt-build-staging ci docker-build docker-test
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z][a-zA-Z0-9_-]*:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "%-16s %s\n", $$1, $$2}'
@@ -33,7 +33,11 @@ dbt-test: ## Run dbt tests against the local DuckDB dev target
 	mkdir -p data/local
 	DBT_PROFILES_DIR=. uv run dbt test
 
-ci: lint lint-sql test dbt-parse ## Run the full CI suite locally
+dbt-build-staging: ## Build and test the staging layer against the local DuckDB dev target
+	mkdir -p data/local
+	DBT_PROFILES_DIR=. uv run dbt build --select staging
+
+ci: lint lint-sql generate test dbt-parse dbt-build-staging ## Run the full CI suite locally
 
 docker-build: ## Build the project image
 	docker build -t credit-data-platform .

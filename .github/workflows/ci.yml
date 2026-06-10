@@ -16,7 +16,11 @@ jobs:
       - run: uv run ruff format --check .
       - run: mkdir -p data/local
       - run: uv run sqlfluff lint models seeds snapshots tests/dbt
+      - run: make generate
       - run: uv run pytest -v
       - run: uv run dbt parse
+        env:
+          DBT_PROFILES_DIR: .
+      - run: uv run dbt build --select staging
         env:
           DBT_PROFILES_DIR: .

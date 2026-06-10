@@ -1,0 +1,29 @@
+# Freshness is intentionally not configured: the landing zone is a static,
+# seed-reproducible snapshot regenerated wholesale by `make generate`, so
+# loaded-at freshness has no meaning here.
+version: 2
+
+sources:
+  - name: loanbook
+    description: >
+      Parquet landing zone written by the seeded synthetic loan-book generator
+      (`make generate`). Read directly by DuckDB via read_parquet — nothing is
+      copied into the warehouse file (see ADR-0003).
+    config:
+      external_location: "read_parquet('data/landing/{name}/*.parquet')"
+    tables:
+      - name: loans
+        description: >
+          One row per originated credit account across the four products
+          (personal loans, auto loans, mortgages, credit cards) with its
+          contractual terms.
+      - name: borrowers
+        description: One row per borrower with banded attributes and credit score.
+      - name: monthly_performance
+        description: >
+          One row per loan per month on book: payments, balances, delinquency
+          bucket, and loan status. Hive-partitioned by report_year_month.
+        config:
+          external_location: >-
+            read_parquet('data/landing/monthly_performance/*/*.parquet',
+            hive_partitioning = true)
