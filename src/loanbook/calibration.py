@@ -1,13 +1,15 @@
 """Generator parameters anchored to published consumer-credit statistics.
 
-Every anchor is cited in docs/calibration-sources.md. Parameters marked
-stylized there are interpolations consistent with the published aggregates,
-not fitted values. Empirical fitting against loan-level performance data
-(Fannie Mae style) is a documented open interface — see
+Every anchor is cited in docs/calibration-sources.md, per product. Parameters
+marked stylized there are interpolations consistent with the published
+aggregates, not fitted values. Empirical fitting against loan-level
+performance data (Fannie Mae style) is a documented open interface — see
 load_calibration_from_loan_performance_data.
 """
 
 from dataclasses import dataclass, field
+
+from loanbook.products import ProductType
 
 
 @dataclass(frozen=True)
@@ -29,9 +31,240 @@ SCORE_BAND_BY_NAME: dict[str, ScoreBand] = {band.name: band for band in SCORE_BA
 
 
 @dataclass(frozen=True)
-class Calibration:
-    """All stochastic parameters of the generator, in one auditable place."""
+class AmortizingProductCalibration:
+    """Stochastic parameters of one installment product, in one auditable place."""
 
+    annual_interest_rate_by_band: dict[str, float]
+    interest_rate_noise_half_width: float
+    term_months_mix: dict[int, float]
+    amount_min_cents: int
+    amount_max_cents: int
+    amount_log_median_cents: float
+    amount_log_sigma: float
+    amount_rounding_cents: int
+    monthly_delinquency_entry_hazard_by_band: dict[str, float]
+    delinquent_roll_probabilities: dict[str, dict[str, float]]
+    monthly_prepayment_rate_by_band: dict[str, float]
+    recovery_rate_on_defaulted_balance: float
+    recovery_lag_months: int
+
+
+@dataclass(frozen=True)
+class RevolvingProductCalibration:
+    """Stochastic parameters of the revolving card product."""
+
+    annual_interest_rate_by_band: dict[str, float]
+    interest_rate_noise_half_width: float
+    credit_limit_cents_by_band: dict[str, int]
+    target_utilization_by_band: dict[str, float]
+    spend_replenishment_min: float
+    spend_replenishment_max: float
+    pay_in_full_probability_by_band: dict[str, float]
+    minimum_payment_principal_rate: float
+    minimum_payment_floor_cents: int
+    monthly_delinquency_entry_hazard_by_band: dict[str, float]
+    delinquent_roll_probabilities: dict[str, dict[str, float]]
+    recovery_rate_on_charged_off_balance: float
+    recovery_lag_months: int
+
+
+def _personal_loan_calibration() -> AmortizingProductCalibration:
+    return AmortizingProductCalibration(
+        annual_interest_rate_by_band={
+            "subprime": 0.249,
+            "near_prime": 0.179,
+            "prime": 0.129,
+            "prime_plus": 0.099,
+            "super_prime": 0.075,
+        },
+        # The ±150bp pricing noise makes adjacent band rate ranges overlap at
+        # the boundary (prime_plus 8.4-11.4% vs super_prime 6.0-9.0%).
+        # Intentional: real rate sheets show cross-band dispersion from
+        # risk-based pricing add-ons, so band is not perfectly recoverable
+        # from rate (ADR-0002).
+        interest_rate_noise_half_width=0.015,
+        term_months_mix={36: 0.7, 60: 0.3},
+        amount_min_cents=100_000,
+        amount_max_cents=4_000_000,
+        amount_log_median_cents=1_000_000.0,
+        amount_log_sigma=0.55,
+        amount_rounding_cents=2_500,
+        monthly_delinquency_entry_hazard_by_band={
+            "subprime": 0.070,
+            "near_prime": 0.034,
+            "prime": 0.012,
+            "prime_plus": 0.005,
+            "super_prime": 0.002,
+        },
+        delinquent_roll_probabilities={
+            "dpd_30": {"cure": 0.35, "stay": 0.25, "roll_deeper": 0.40},
+            "dpd_60": {"cure": 0.20, "stay": 0.25, "roll_deeper": 0.55},
+            "dpd_90_plus": {"cure": 0.10, "stay": 0.20, "roll_deeper": 0.70},
+        },
+        monthly_prepayment_rate_by_band={
+            "subprime": 0.0134,
+            "near_prime": 0.0184,
+            "prime": 0.0237,
+            "prime_plus": 0.0270,
+            "super_prime": 0.0293,
+        },
+        recovery_rate_on_defaulted_balance=0.08,
+        recovery_lag_months=6,
+    )
+
+
+def _auto_loan_calibration() -> AmortizingProductCalibration:
+    return AmortizingProductCalibration(
+        annual_interest_rate_by_band={
+            "subprime": 0.189,
+            "near_prime": 0.139,
+            "prime": 0.099,
+            "prime_plus": 0.075,
+            "super_prime": 0.064,
+        },
+        interest_rate_noise_half_width=0.015,
+        term_months_mix={36: 0.05, 48: 0.10, 60: 0.22, 72: 0.33, 84: 0.30},
+        amount_min_cents=400_000,
+        amount_max_cents=12_000_000,
+        amount_log_median_cents=2_800_000.0,
+        amount_log_sigma=0.35,
+        amount_rounding_cents=10_000,
+        monthly_delinquency_entry_hazard_by_band={
+            "subprime": 0.030,
+            "near_prime": 0.013,
+            "prime": 0.005,
+            "prime_plus": 0.0022,
+            "super_prime": 0.0010,
+        },
+        delinquent_roll_probabilities={
+            "dpd_30": {"cure": 0.38, "stay": 0.25, "roll_deeper": 0.37},
+            "dpd_60": {"cure": 0.22, "stay": 0.25, "roll_deeper": 0.53},
+            "dpd_90_plus": {"cure": 0.10, "stay": 0.20, "roll_deeper": 0.70},
+        },
+        monthly_prepayment_rate_by_band={
+            "subprime": 0.0150,
+            "near_prime": 0.0180,
+            "prime": 0.0210,
+            "prime_plus": 0.0240,
+            "super_prime": 0.0260,
+        },
+        recovery_rate_on_defaulted_balance=0.45,
+        recovery_lag_months=3,
+    )
+
+
+def _mortgage_calibration() -> AmortizingProductCalibration:
+    return AmortizingProductCalibration(
+        annual_interest_rate_by_band={
+            "subprime": 0.0775,
+            "near_prime": 0.0715,
+            "prime": 0.0675,
+            "prime_plus": 0.0645,
+            "super_prime": 0.0625,
+        },
+        interest_rate_noise_half_width=0.0025,
+        term_months_mix={180: 0.1, 360: 0.9},
+        amount_min_cents=5_000_000,
+        amount_max_cents=150_000_000,
+        amount_log_median_cents=32_000_000.0,
+        amount_log_sigma=0.45,
+        amount_rounding_cents=100_000,
+        monthly_delinquency_entry_hazard_by_band={
+            "subprime": 0.011,
+            "near_prime": 0.005,
+            "prime": 0.002,
+            "prime_plus": 0.0009,
+            "super_prime": 0.0004,
+        },
+        delinquent_roll_probabilities={
+            "dpd_30": {"cure": 0.40, "stay": 0.40, "roll_deeper": 0.20},
+            "dpd_60": {"cure": 0.25, "stay": 0.45, "roll_deeper": 0.30},
+            "dpd_90_plus": {"cure": 0.10, "stay": 0.55, "roll_deeper": 0.35},
+        },
+        monthly_prepayment_rate_by_band={
+            "subprime": 0.0043,
+            "near_prime": 0.0051,
+            "prime": 0.0060,
+            "prime_plus": 0.0069,
+            "super_prime": 0.0078,
+        },
+        recovery_rate_on_defaulted_balance=0.70,
+        recovery_lag_months=12,
+    )
+
+
+def _credit_card_calibration() -> RevolvingProductCalibration:
+    return RevolvingProductCalibration(
+        annual_interest_rate_by_band={
+            "subprime": 0.279,
+            "near_prime": 0.249,
+            "prime": 0.225,
+            "prime_plus": 0.205,
+            "super_prime": 0.185,
+        },
+        interest_rate_noise_half_width=0.015,
+        credit_limit_cents_by_band={
+            "subprime": 250_000,
+            "near_prime": 500_000,
+            "prime": 800_000,
+            "prime_plus": 1_100_000,
+            "super_prime": 1_500_000,
+        },
+        target_utilization_by_band={
+            "subprime": 0.75,
+            "near_prime": 0.50,
+            "prime": 0.32,
+            "prime_plus": 0.18,
+            "super_prime": 0.08,
+        },
+        spend_replenishment_min=0.5,
+        spend_replenishment_max=1.5,
+        pay_in_full_probability_by_band={
+            "subprime": 0.05,
+            "near_prime": 0.15,
+            "prime": 0.35,
+            "prime_plus": 0.55,
+            "super_prime": 0.75,
+        },
+        minimum_payment_principal_rate=0.01,
+        minimum_payment_floor_cents=3_000,
+        monthly_delinquency_entry_hazard_by_band={
+            "subprime": 0.022,
+            "near_prime": 0.010,
+            "prime": 0.0045,
+            "prime_plus": 0.0018,
+            "super_prime": 0.0008,
+        },
+        delinquent_roll_probabilities={
+            "dpd_30": {"cure": 0.32, "stay": 0.25, "roll_deeper": 0.43},
+            "dpd_60": {"cure": 0.20, "stay": 0.28, "roll_deeper": 0.52},
+            "dpd_90_plus": {"cure": 0.08, "stay": 0.37, "roll_deeper": 0.55},
+        },
+        recovery_rate_on_charged_off_balance=0.08,
+        recovery_lag_months=6,
+    )
+
+
+@dataclass(frozen=True)
+class Calibration:
+    """All stochastic parameters of the generator, grouped per product."""
+
+    product_mix: dict[str, float] = field(
+        default_factory=lambda: {
+            ProductType.CREDIT_CARD.value: 0.55,
+            ProductType.PERSONAL_LOAN.value: 0.20,
+            ProductType.AUTO_LOAN.value: 0.17,
+            ProductType.MORTGAGE.value: 0.08,
+        }
+    )
+    amortizing_products: dict[str, AmortizingProductCalibration] = field(
+        default_factory=lambda: {
+            ProductType.PERSONAL_LOAN.value: _personal_loan_calibration(),
+            ProductType.AUTO_LOAN.value: _auto_loan_calibration(),
+            ProductType.MORTGAGE.value: _mortgage_calibration(),
+        }
+    )
+    credit_card: RevolvingProductCalibration = field(default_factory=_credit_card_calibration)
     origination_mix_by_band: dict[str, float] = field(
         default_factory=lambda: {
             "subprime": 0.20,
@@ -41,53 +274,6 @@ class Calibration:
             "super_prime": 0.10,
         }
     )
-    annual_interest_rate_by_band: dict[str, float] = field(
-        default_factory=lambda: {
-            "subprime": 0.249,
-            "near_prime": 0.179,
-            "prime": 0.129,
-            "prime_plus": 0.099,
-            "super_prime": 0.075,
-        }
-    )
-    # The ±150bp pricing noise makes adjacent band rate ranges overlap at the
-    # boundary (prime_plus 8.4-11.4% vs super_prime 6.0-9.0%). Intentional:
-    # real rate sheets show cross-band dispersion from risk-based pricing
-    # add-ons, so band is not perfectly recoverable from rate (ADR-0002).
-    interest_rate_noise_half_width: float = 0.015
-    monthly_delinquency_entry_hazard_by_band: dict[str, float] = field(
-        default_factory=lambda: {
-            "subprime": 0.070,
-            "near_prime": 0.034,
-            "prime": 0.012,
-            "prime_plus": 0.005,
-            "super_prime": 0.002,
-        }
-    )
-    delinquent_roll_probabilities: dict[str, dict[str, float]] = field(
-        default_factory=lambda: {
-            "dpd_30": {"cure": 0.35, "stay": 0.25, "roll_deeper": 0.40},
-            "dpd_60": {"cure": 0.20, "stay": 0.25, "roll_deeper": 0.55},
-            "dpd_90_plus": {"cure": 0.10, "stay": 0.20, "roll_deeper": 0.70},
-        }
-    )
-    monthly_prepayment_rate_by_band: dict[str, float] = field(
-        default_factory=lambda: {
-            "subprime": 0.0134,
-            "near_prime": 0.0184,
-            "prime": 0.0237,
-            "prime_plus": 0.0270,
-            "super_prime": 0.0293,
-        }
-    )
-    recovery_rate_on_defaulted_balance: float = 0.08
-    recovery_lag_months: int = 6
-    term_months_mix: dict[int, float] = field(default_factory=lambda: {36: 0.7, 60: 0.3})
-    loan_amount_min_cents: int = 100_000
-    loan_amount_max_cents: int = 4_000_000
-    loan_amount_log_median_cents: float = 1_000_000.0
-    loan_amount_log_sigma: float = 0.55
-    loan_amount_rounding_cents: int = 2_500
     age_band_mix: dict[str, float] = field(
         default_factory=lambda: {
             "18-24": 0.10,
