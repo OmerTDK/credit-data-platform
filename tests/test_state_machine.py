@@ -10,6 +10,7 @@ from loanbook.state_machine import (
     IllegalTransitionError,
     LoanStatus,
     bucket_for_missed_payments,
+    next_deeper_bucket,
     validate_bucket_transition,
 )
 
@@ -114,6 +115,32 @@ class TestBucketForMissedPayments:
     def test_negative_count_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="missed_payments"):
             bucket_for_missed_payments(-1)
+
+
+class TestNextDeeperBucket:
+    @pytest.mark.parametrize(
+        ("bucket", "expected_deeper"),
+        [
+            (DelinquencyBucket.CURRENT, DelinquencyBucket.DPD_30),
+            (DelinquencyBucket.DPD_30, DelinquencyBucket.DPD_60),
+            (DelinquencyBucket.DPD_60, DelinquencyBucket.DPD_90_PLUS),
+            (DelinquencyBucket.DPD_90_PLUS, DelinquencyBucket.DEFAULT),
+        ],
+    )
+    def test_steps_exactly_one_bucket_deeper(
+        self, bucket: DelinquencyBucket, expected_deeper: DelinquencyBucket
+    ) -> None:
+        assert next_deeper_bucket(bucket) == expected_deeper
+
+    def test_stepping_deeper_is_always_a_legal_transition(self) -> None:
+        for bucket in DelinquencyBucket:
+            if bucket == DelinquencyBucket.DEFAULT:
+                continue
+            validate_bucket_transition(bucket, next_deeper_bucket(bucket))
+
+    def test_default_has_no_deeper_bucket(self) -> None:
+        with pytest.raises(ValueError, match="default"):
+            next_deeper_bucket(DelinquencyBucket.DEFAULT)
 
 
 class TestLoanStatus:

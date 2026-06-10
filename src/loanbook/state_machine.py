@@ -72,6 +72,16 @@ def validate_bucket_transition(
         )
 
 
+def next_deeper_bucket(bucket: DelinquencyBucket) -> DelinquencyBucket:
+    """Return the bucket one delinquency stage deeper than `bucket`.
+
+    Default is absorbing, so it has no deeper bucket and raises ValueError.
+    """
+    if bucket == DelinquencyBucket.DEFAULT:
+        raise ValueError("default is absorbing: there is no bucket deeper than default")
+    return _BUCKET_BY_MISSED_PAYMENTS[_BUCKET_BY_MISSED_PAYMENTS.index(bucket) + 1]
+
+
 def bucket_for_missed_payments(missed_payments: int) -> DelinquencyBucket:
     """Map a count of consecutive missed monthly payments to its bucket."""
     if missed_payments < 0 or missed_payments > MISSED_PAYMENTS_FOR_DEFAULT:
