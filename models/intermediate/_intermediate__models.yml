@@ -1,0 +1,108 @@
+version: 2
+
+models:
+  - name: int_loan
+    description: >
+      Intermediate pass-through for loan origination data; typed and renamed
+      in staging. One row per originated account.
+    columns:
+      - name: loan_id
+        description: Natural key of the loan.
+        data_tests:
+          - unique
+          - not_null
+      - name: borrower_id
+        description: Natural key of the borrower.
+        data_tests:
+          - not_null
+      - name: product_type
+        description: Credit product of the account.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [personal_loan, auto_loan, mortgage, credit_card]
+      - name: origination_month
+        description: First day of the month the account was originated.
+        data_tests:
+          - not_null
+      - name: interest_rate
+        description: Annual interest rate as a decimal (0.129 = 12.9% APR).
+        data_tests:
+          - not_null
+
+  - name: int_borrower
+    description: >
+      Intermediate pass-through for borrower demographic data. One row per
+      borrower.
+    columns:
+      - name: borrower_id
+        description: Natural key of the borrower.
+        data_tests:
+          - unique
+          - not_null
+      - name: score_band
+        description: Credit score band at origination.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [subprime, near_prime, prime, prime_plus, super_prime]
+      - name: credit_score
+        description: Credit score drawn within the score band (300-850).
+        data_tests:
+          - not_null
+
+  - name: int_monthly_performance
+    description: >
+      Intermediate pass-through for monthly performance data; typed in staging.
+      Grain is (loan_id, months_on_book).
+    columns:
+      - name: loan_id
+        description: Natural key of the account.
+        data_tests:
+          - not_null
+      - name: months_on_book
+        description: 1-based loan age in months.
+        data_tests:
+          - not_null
+      - name: delinquency_bucket
+        description: Delinquency bucket from the state machine.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [current, dpd_30, dpd_60, dpd_90_plus, default]
+      - name: loan_status
+        description: Lifecycle status of the loan as of this month.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [active, paid_off, defaulted, recovery_complete]
+
+  - name: int_borrower_monthly_delinquency
+    description: >
+      Worst delinquency bucket per borrower per month, derived by joining loan
+      performance back to the borrower via the loan. Used as the time-varying
+      attribute that drives dim_borrower SCD2. Grain is (borrower_id,
+      report_month).
+    columns:
+      - name: borrower_id
+        description: Natural key of the borrower.
+        data_tests:
+          - not_null
+      - name: report_month
+        description: First day of the calendar month.
+        data_tests:
+          - not_null
+      - name: current_delinquency_bucket
+        description: >
+          Worst delinquency bucket across all of this borrower's active loans
+          this month. Severity order: default > dpd_90_plus > dpd_60 >
+          dpd_30 > current.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [current, dpd_30, dpd_60, dpd_90_plus, default]
