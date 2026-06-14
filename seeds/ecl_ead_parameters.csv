@@ -1,0 +1,5 @@
+product_type,ccf_rate,ccf_source_note
+personal_loan,0.00,fully drawn at origination; no undrawn commitment
+auto_loan,0.00,fully drawn at origination
+mortgage,0.00,fully drawn at origination
+credit_card,0.75,Basel II retail revolving stylized estimate

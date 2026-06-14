@@ -1,0 +1,4 @@
+scenario_name,scenario_weight,pd_scalar,lgd_scalar
+baseline,0.50,1.00,1.00
+adverse,0.30,1.40,1.10
+upside,0.20,0.75,0.95

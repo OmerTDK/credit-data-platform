@@ -41,7 +41,18 @@ dbt-build-dwh: ## Build and test the intermediate + DWH dimensional layer
 	mkdir -p data/local
 	DBT_PROFILES_DIR=. uv run dbt build --select staging intermediate dwh
 
-ci: lint lint-sql generate test dbt-parse dbt-build-staging dbt-build-dwh ## Run the full CI suite locally
+validate-ecl-params: ## Validate ECL seed parameters before dbt build
+	uv run python -m ecl_backtest.validate_parameters
+
+dbt-build-risk: ## Build risk mart models on top of the DWH
+	mkdir -p data/local
+	DBT_PROFILES_DIR=. uv run dbt build --select "int_risk_roll_rate_observations int_risk_vintage_cohort_spine mart_risk_roll_rate_matrix mart_risk_vintage_curve mart_risk_prepayment_speed"
+
+dbt-build-ecl: validate-ecl-params ## Build ECL seeds and mart_finance models
+	mkdir -p data/local
+	DBT_PROFILES_DIR=. uv run dbt build --select "ecl_lgd_parameters ecl_ead_parameters ecl_scenario_weights ecl_watchlist int_ecl_pd_term_structure int_ecl_staging int_ecl_ead_by_loan int_ecl_lgd_by_loan int_ecl_components mart_finance_ecl_allowance mart_finance_ecl_summary"
+
+ci: lint lint-sql generate test dbt-parse dbt-build-staging dbt-build-dwh dbt-build-risk dbt-build-ecl ## Run the full CI suite locally
 
 docker-build: ## Build the project image
 	docker build -t credit-data-platform .
