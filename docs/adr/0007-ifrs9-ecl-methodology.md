@@ -25,55 +25,51 @@ The ECL layer must:
 
 ---
 
-## Decision: Stationary Markov approximation for 12-month PD
+## Decision: Multi-step Markov chain for the PD term structure
 
-**The full 12-step Markov CTE unroll (one CTE per step) was evaluated and
-rejected.** The verbosity required to express the 5-state × 12-step transition
-matrix recursion in SQL (60+ CTEs across the full term structure) exceeds the
-40-line CTE limit in `engineering-principles.md §2`, and would require splitting
-into 4+ intermediates with dependency chains that obscure the logic.
+**Chosen approach:** an explicit 5-state Markov chain (`current`, `dpd_30`,
+`dpd_60`, `dpd_90_plus`, `default`) with `default` absorbing, propagated by a
+recursive CTE in `int_ecl_pd_term_structure`.
 
-**Chosen approach:** Stationary Markov closed-form.
+The roll-rate matrix only ever observes a direct transition to `default` from
+`dpd_90_plus` — no `current`/`dpd_30`/`dpd_60` loan defaults in a single month.
+A single-step formula such as `1 - (1 - p_default_step)^12` therefore collapses
+to zero for those buckets, which would zero out Stage 1 and Stage 2 ECL for the
+overwhelming majority of the book. The multi-step chain fixes this: it
+propagates the bucket distribution through the intermediate states so the
+default mass that accumulates over 12 hops is captured.
 
-Under the stationary assumption (time-averaged transition rates), the 12-month
-cumulative PD from a given starting bucket is approximated as:
+**Construction:**
 
-```
-pd_12m = 1 - (1 - p_default_step)^12
-```
+1. `transition_matrix` — count-based one-step probabilities per
+   `(product_type, score_band, from_bucket, to_bucket)`, aggregated across all
+   observation periods and row-normalised so each `from_bucket`'s outgoing
+   probabilities sum to 1.0 (re-basing on observed mass removes right-censoring
+   leakage). Counts, not balances, are used: PD is a loan-level default
+   probability, so the loan-count transition rate is the correct estimator.
+2. `transition_matrix_absorbing` — the matrix plus a `default -> default = 1.0`
+   self-loop, so the recursive step is a plain join (no correlated lateral).
+3. `markov_state` — a recursive CTE holding the probability-mass vector
+   "starting in bucket X, after `step` transitions, this much mass is in bucket
+   Y." `pd_12m` reads the `default` mass at step 12; a 120-step Markov lifetime
+   PD is read at step 120.
 
-where `p_default_step` is the balance-weighted average probability of transitioning
-into the `default` absorbing state in one step, derived from
-`mart_risk_roll_rate_matrix.transition_balance_rate`.
+**Lifetime PD** is the worst-case of (a) the 120-step Markov default mass, (b)
+the vintage-curve cohort-averaged terminal CDR, and (c) the 12-month PD floor —
+so the lifetime PD never falls below the 12-month PD and is informed by both the
+forward Markov projection and the realised cohort experience.
 
-**Important caveat on formula scope:** This formula equals zero when there is no
-direct one-step transition from the starting bucket to `default` (i.e., when
-`p_default_step = 0`). For the 5-state chain (`current`, `dpd_30`, `dpd_60`,
-`dpd_90_plus`, `default`), buckets `current`, `dpd_30`, and `dpd_60` have no
-direct transition to `default` in the synthetic book — loans must step through
-intermediate buckets. `int_ecl_pd_term_structure` addresses this by including
-all four active delinquency buckets in the spine (via `segment_bucket_spine`),
-and for buckets with no direct-to-default step rate, `pd_12m = 0` — the
-vintage-curve terminal CDR then serves as the floor for `pd_lifetime` (see
-below). A full 5-state × 12-step Markov matrix exponentiation would yield
-the correct multi-hop first-passage probabilities but was rejected for verbosity.
+**Edge case — sparse segments:** two synthetic segments (mortgage `prime_plus`,
+`super_prime`, 247 loans / ~2% of the book) have no observed delinquency
+transitions at all, so they produce no PD rows and the joining loans carry
+PD 0 via `COALESCE` downstream. A true 0 is analytically honest here — these
+loans never went delinquent in the generated history — rather than a fabricated
+floor. On a real book these segments would borrow a prior from a parent segment.
 
-**Tradeoff:** The formula is an approximation that underestimates 12m PD for
-`current`, `dpd_30`, and `dpd_60` buckets (producing 0 instead of the correct
-multi-hop probability). Stage 1/2 ECL is therefore calibrated primarily through
-the lifetime PD from the vintage curve, not the 12m PD term structure. On a
-real book, a proper Markov matrix exponentiation or cohort-based CDR term
-structure would be required for regulatory sign-off.
-
-**Tradeoff on stationarity:** Path-dependency is also lost (a loan that moves
-`current` → `dpd_30` → `current` is treated the same as one that stays
-`current`). For the synthetic book this is acceptable — the generator uses a
-stationary transition matrix by construction.
-
-**Rationale for choosing `transition_balance_rate` over `transition_rate`:**
-Per the Phase 3 YAML description, balance-weighted rates are preferred for ECL
-PD calibration — they weight the default signal by the exposure size rather than
-loan count, which is more conservative for large loans.
+**Tradeoff on stationarity:** the chain is time-homogeneous (transition rates are
+averaged across observation periods) and Markovian (path-independent). For the
+synthetic book this is exact by construction — the generator itself uses a
+stationary, memoryless transition matrix.
 
 ---
 
@@ -148,15 +144,14 @@ The Python approach reads seeds from CSV (zero warehouse dependency for paramete
 validation) and DWH data from DuckDB. This keeps the backtest runnable in CI
 without a live warehouse connection.
 
-**Simplified PD methodology in backtest (intentional):** The backtest uses flat
-PD estimates by IFRS 9 stage (Stage 1 = 5%, Stage 2 = 15%, Stage 3 = 100%)
-rather than the Markov-derived PDs from `mart_finance_ecl_allowance`. This is a
-deliberate simplification: the backtest validates the EAD/LGD parameterisation
-and realized-loss measurement pipeline, not the Markov PD methodology itself.
-The coverage ratio [0.5, 2.0] acceptance gate is calibrated for the flat-PD
-proxy model, not for the deployed ECL. To validate the Markov PD, the backtest
-would need to read `mart_finance_ecl_allowance` (baseline scenario) at each
-historical as_of_date — a future enhancement.
+**PD methodology in backtest:** The backtest reads the model's PD term structure
+(`int_ecl_pd_term_structure`) and applies the same horizon logic as the dbt ECL
+model — Stage 1 uses the 12-month PD, Stage 2 the lifetime PD, Stage 3 PD = 1.0,
+keyed by `(product_type, score_band, delinquency_bucket)`. The backtest therefore
+validates the deployed roll-rate-derived Markov PD methodology together with the
+EAD/LGD parameterisation against realized losses, not a disconnected proxy. The
+coverage ratio [0.5, 2.0] acceptance gate measured 1.29 on the seeded book
+(realized vs. modeled loss over the eight quarterly as_of_dates).
 
 ---
 

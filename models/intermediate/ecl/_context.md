@@ -19,13 +19,16 @@ intentional and documented — it is NOT a layer-boundary breach.
 
 ## Design decisions
 
-- PD term structure uses a stationary Markov approximation: average balance-weighted
-  transition rate from `mart_risk_roll_rate_matrix`, then `1 - (1 - p_step)^12` for
-  12-month PD. This closed-form is equivalent to the full 12-CTE unroll under a
-  time-stationary chain assumption and is preferred here to stay within the 40-line
-  CTE limit (engineering-principles.md §2).
-- Lifetime PD reads cohort-averaged terminal CDR from `mart_risk_vintage_curve`, using
-  LAST_VALUE to handle censored rows at high MOB.
+- PD term structure runs an explicit 5-state Markov chain (`default` absorbing) over
+  the count-based, row-normalised one-step transitions from `mart_risk_roll_rate_matrix`.
+  A recursive CTE propagates the bucket-distribution vector; the default mass at step 12
+  is the 12-month PD and at step 120 the Markov lifetime PD. A single-step
+  `1 - (1 - p_step)^12` was rejected — it is zero for any bucket with no direct
+  one-step transition to `default` (every bucket but `dpd_90_plus`), which would zero
+  out Stage 1/2 ECL. See ADR-0007.
+- Lifetime PD is the worst-case of the Markov lifetime PD, the cohort-averaged terminal
+  CDR from `mart_risk_vintage_curve` (LAST_VALUE over non-censored rows), and the
+  12-month PD floor.
 - Scenario variation is injected exclusively in `int_ecl_components` via cross-join to
   `ecl_scenario_weights`. Upstream intermediates are scenario-agnostic.
 - EAD for Stage 3 reduces by post-default recovery already received.
