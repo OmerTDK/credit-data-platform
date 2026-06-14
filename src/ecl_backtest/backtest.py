@@ -1,7 +1,8 @@
 """IFRS 9 ECL backtest: modeled vs realized loss over historical periods.
 
 Iterates quarterly as_of_dates (2022-Q1 through 2023-Q4) and computes:
-- Modeled ECL (simplified proxy) per loan at each as_of_date.
+- Modeled ECL per loan at each as_of_date, using the SAME roll-rate-derived PD
+  term structure the dbt ECL model uses (int_ecl_pd_term_structure).
 - Realized loss (principal_writeoff_amount) observed 12 months later.
 
 Outputs coverage_ratio = sum(realized) / sum(modeled) and bias by segment.
@@ -11,13 +12,11 @@ Why Python: the backtest loops over multiple historical as_of_dates — a
 temporal iteration that cannot be expressed as set-based SQL without collapsing
 to a single cutoff date.
 
-Simplified backtest methodology (intentional simplification):
-The modeled ECL here uses flat PD estimates by IFRS 9 stage: Stage 1 = 5%,
-Stage 2 = 15%, Stage 3 = 100%. These are stylized parameters, NOT the
-Markov-derived PDs from mart_finance_ecl_allowance. This backtest is a
-sanity-check of the EAD/LGD parameterisation and realized-loss measurement
-pipeline, not a validation of the dbt ECL model's Markov PD methodology.
-Coverage ratio [0.5, 2.0] validates the proxy model, not the deployed ECL.
+PD methodology: PDs come from int_ecl_pd_term_structure, keyed by
+(product_type, score_band, delinquency_bucket). Stage 1 uses the 12-month PD,
+Stage 2 uses the lifetime PD, Stage 3 uses PD = 1.0. This mirrors the dbt ECL
+model exactly, so the backtest validates the deployed Markov PD methodology and
+the EAD/LGD parameterisation against realized losses — not a disconnected proxy.
 """
 
 import datetime
@@ -62,7 +61,30 @@ def load_dwh_data(connection: duckdb.DuckDBPyConnection) -> dict[str, pd.DataFra
         "credit_limit_amount, interest_rate "
         "FROM dwh.dim_loan"
     ).df()
-    return {"fct_payment": fct_payment, "dim_loan": dim_loan}
+    pd_term_structure = connection.execute(
+        "SELECT product_type, score_band, starting_bucket, "
+        "CAST(pd_12m AS DOUBLE) AS pd_12m, "
+        "CAST(pd_lifetime AS DOUBLE) AS pd_lifetime "
+        "FROM int.int_ecl_pd_term_structure"
+    ).df()
+    return {
+        "fct_payment": fct_payment,
+        "dim_loan": dim_loan,
+        "pd_term_structure": pd_term_structure,
+    }
+
+
+def model_pd(stage: int, pd_12m: float, pd_lifetime: float) -> float:
+    """Return the PD the dbt ECL model applies for this stage.
+
+    Stage 1 -> 12-month PD; Stage 2 -> lifetime PD; Stage 3 -> 1.0. Mirrors the
+    horizon logic in int_ecl_components so the backtest uses the deployed PDs.
+    """
+    if stage == 3:
+        return 1.0
+    if stage == 2:
+        return pd_lifetime
+    return pd_12m
 
 
 def assign_stage(delinquency_bucket: str, loan_status: str) -> int:
@@ -90,6 +112,7 @@ def compute_modeled_ecl_at_date(
     loans: pd.DataFrame,
     lgd_params: pd.DataFrame,
     ead_params: pd.DataFrame,
+    pd_term_structure: pd.DataFrame,
 ) -> pd.DataFrame:
     snapshot = payments[payments["report_month"] <= pd.Timestamp(as_of_date)]
     if snapshot.empty:
@@ -128,11 +151,26 @@ def compute_modeled_ecl_at_date(
         )
     current_state["lgd"] = lgd_series
 
-    current_state["pd_12m"] = current_state["stage"].map({1: 0.05, 2: 0.15, 3: 1.0})
-    current_state["ecl"] = current_state["pd_12m"] * current_state["lgd"] * current_state["ead"]
+    # Join the model's PD term structure on (product_type, score_band, bucket).
+    # Stage 3 buckets (dpd_90_plus, default) have no PD row but get PD = 1.0 in
+    # model_pd. Segments with no observed transitions have no PD row either; left
+    # join leaves NaN, which fillna(0.0) maps to no modeled loss for that loan.
+    current_state = current_state.merge(
+        pd_term_structure,
+        how="left",
+        left_on=["product_type", "score_band", "delinquency_bucket"],
+        right_on=["product_type", "score_band", "starting_bucket"],
+    )
+    current_state["pd_12m"] = current_state["pd_12m"].fillna(0.0)
+    current_state["pd_lifetime"] = current_state["pd_lifetime"].fillna(0.0)
+
+    current_state["pd"] = current_state.apply(
+        lambda r: model_pd(r["stage"], r["pd_12m"], r["pd_lifetime"]), axis=1
+    )
+    current_state["ecl"] = current_state["pd"] * current_state["lgd"] * current_state["ead"]
 
     return current_state[
-        ["loan_id", "product_type", "score_band", "stage", "ead", "lgd", "pd_12m", "ecl"]
+        ["loan_id", "product_type", "score_band", "stage", "ead", "lgd", "pd", "ecl"]
     ]
 
 
@@ -164,11 +202,14 @@ def run_backtest() -> pd.DataFrame:
     payments = data["fct_payment"].copy()
     payments["report_month"] = pd.to_datetime(payments["report_month"])
     loans = data["dim_loan"]
+    pd_term_structure = data["pd_term_structure"]
 
     all_results = []
 
     for as_of_date in BACKTEST_QUARTERS:
-        modeled = compute_modeled_ecl_at_date(as_of_date, payments, loans, lgd_params, ead_params)
+        modeled = compute_modeled_ecl_at_date(
+            as_of_date, payments, loans, lgd_params, ead_params, pd_term_structure
+        )
         if modeled.empty:
             continue
 

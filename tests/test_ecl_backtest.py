@@ -102,13 +102,14 @@ class TestValidateParameters:
         assert lgd_map["mortgage"] < lgd_map["credit_card"]
 
 
-class TestSimplifiedBacktestCoverage:
-    """Verify that the simplified proxy backtest coverage ratio is within plausible bounds.
+class TestModelPdBacktestCoverage:
+    """Verify the backtest coverage ratio is within plausible bounds.
 
-    The backtest uses flat PD estimates by stage (5%/15%/100%), NOT the
-    Markov-derived PDs from mart_finance_ecl_allowance. Coverage ratio [0.5, 2.0]
-    validates the EAD/LGD parameterisation and realized-loss pipeline, not the
-    deployed dbt ECL model's Markov PD methodology. See backtest.py module docstring.
+    The backtest uses the SAME roll-rate-derived PD term structure as the dbt
+    ECL model (int_ecl_pd_term_structure): Stage 1 -> 12-month PD, Stage 2 ->
+    lifetime PD, Stage 3 -> 1.0. Coverage ratio [0.5, 2.0] therefore validates
+    the deployed Markov PD methodology together with the EAD/LGD
+    parameterisation against realized losses. See backtest.py module docstring.
     """
 
     COVERAGE_MIN = 0.5
@@ -119,6 +120,19 @@ class TestSimplifiedBacktestCoverage:
         duckdb_path = REPO_ROOT / "data" / "local" / "credit_platform.duckdb"
         if not duckdb_path.exists():
             pytest.skip("DuckDB not built yet — run make ci first")
+
+        # The backtest reads the model's PD term structure; if the ECL chain has
+        # not been built yet in this session, skip cleanly rather than crash on a
+        # missing relation (the ECL mart test fixture builds it).
+        import duckdb
+
+        with duckdb.connect(str(duckdb_path), read_only=True) as connection:
+            pd_view_exists = connection.execute(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_schema = 'int' AND table_name = 'int_ecl_pd_term_structure'"
+            ).fetchone()[0]
+        if not pd_view_exists:
+            pytest.skip("ECL PD term structure not built yet — run make ci first")
 
         from ecl_backtest.backtest import run_backtest, summarize_backtest
 
@@ -144,9 +158,9 @@ class TestSimplifiedBacktestCoverage:
         )
 
     def test_segment_coverage_ratio_within_bounds(self, backtest_results: pd.DataFrame) -> None:
-        # Wide bounds for a synthetic book with flat PD proxy.
+        # Wide bounds for a synthetic book with segment-level model PDs.
         # Lower bound 0.001 accommodates prime segments where realized losses are
-        # near-zero but modeled ECL (5% flat PD) is positive.
+        # near-zero but modeled ECL (positive model PD) is positive.
         # Upper bound 100.0 catches catastrophically wrong EAD/LGD parameterisation.
         segment_coverage_min = 0.001
         segment_coverage_max = 100.0
