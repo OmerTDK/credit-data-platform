@@ -12,9 +12,10 @@ lint: ## Ruff lint and format check
 	uv run ruff check .
 	uv run ruff format --check .
 
-lint-sql: ## SQLFluff lint dbt SQL (duckdb dialect, dbt templater)
+lint-sql: ## SQLFluff lint dbt SQL (duckdb dialect, dbt templater) + Evidence source SQL (raw templater)
 	mkdir -p data/local
 	uv run sqlfluff lint models seeds snapshots tests/dbt
+	uv run sqlfluff lint bi/sources/credit_platform --dialect duckdb --templater raw
 
 test: ## Run the test suite
 	uv run pytest -v

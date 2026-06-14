@@ -3,8 +3,11 @@ title: Vintage Curves
 ---
 
 Cumulative loss and prepayment behaviour by origination cohort and months on
-book (MOB). These curves are the cohort view of the `vintage_loss_curve` and
-`cpr` semantic metrics.
+book (MOB). These curves implement the same arithmetic as the `vintage_loss_curve`
+and `cpr` semantic metrics, but read from the mart tables directly
+(`mart_risk.mart_risk_vintage_curve` and `mart_risk.mart_risk_prepayment_speed`)
+rather than via the MetricFlow API — the two paths are kept in agreement by the
+pinned semantic tests in `tests/test_semantic_layer.py`.
 
 ```sql vintage_curve
 select * from credit_platform.vintage_curve

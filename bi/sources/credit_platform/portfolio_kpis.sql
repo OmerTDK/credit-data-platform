@@ -9,8 +9,7 @@ with originations as (
 ),
 
 lifecycle as (
-    select
-        avg(case when has_defaulted then 1.0 else 0.0 end) as default_rate
+    select avg(case when has_defaulted then 1.0 else 0.0 end) as default_rate
     from dwh.fct_loan_lifecycle
 ),
 
@@ -22,7 +21,8 @@ balances as (
         avg(
             case
                 when delinquency_bucket in ('dpd_30', 'dpd_60', 'dpd_90_plus', 'default')
-                    then 1.0 else 0.0
+                    then 1.0
+                else 0.0
             end
         ) as delinquency_rate
     from dwh.fct_payment

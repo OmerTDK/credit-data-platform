@@ -58,7 +58,12 @@ metrics:
       denominator: performing_pool_balance
   - name: cpr
     label: Conditional prepayment rate
-    description: Annualized prepayment speed, 1 - (1 - SMM)^12. PSA convention.
+    description: >
+      Annualized prepayment speed, 1 - (1 - SMM)^12. PSA convention. Computed
+      from book-level aggregated SMM (SUM(prepaid_balance) /
+      SUM(performing_pool_balance)), not an average of per-cohort CPR rates.
+      Group by cohort_quarter and product to get per-cohort CPR curves; the
+      portfolio-level ungrouped scalar is the blended book rate.
     type: derived
     type_params:
       expr: 1 - power(1 - smm, 12)

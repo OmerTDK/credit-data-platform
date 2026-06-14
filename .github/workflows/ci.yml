@@ -27,6 +27,7 @@ jobs:
       - run: uv run ruff format --check .
       - run: mkdir -p data/local
       - run: uv run sqlfluff lint models seeds snapshots tests/dbt
+      - run: uv run sqlfluff lint bi/sources/credit_platform --dialect duckdb --templater raw
       - run: make generate
       # pytest runs WITHOUT ELEMENTARY_CAPTURE; Elementary tests pass vacuously on
       # first run (no historical baseline). The sole Elementary-producing run is

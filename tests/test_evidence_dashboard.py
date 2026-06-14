@@ -40,9 +40,18 @@ def _source_sql_files() -> list[Path]:
 
 @pytest.fixture(scope="module")
 def warehouse_ready() -> None:
-    """Ensure the dwh / mart tables Evidence reads exist in the DuckDB file."""
-    if not DUCKDB_FILE.exists():
-        pytest.skip("warehouse not built; run make ci or the dbt build targets first")
+    """Build the dwh / mart tables Evidence reads into the DuckDB warehouse.
+
+    The skip guard has been removed: `make generate` (which runs before pytest in
+    both CI and `make ci`) ensures the parquet landing files exist. The dbt build
+    here is self-sufficient given those parquet files — the same guarantee that
+    `semantic_layer_ready` already relies on. A clean CI run (no prior DuckDB)
+    must still gate these 6 source-query tests.
+    """
+    # Include all conformed dims and event-sourced tables so FK relationship
+    # tests have their referents present on a clean (no prior DuckDB) build.
+    # Without dim_date / dim_product / dim_loan / fct_loan_state_event the
+    # relationship tests on the fact tables fail with "Table does not exist".
     build = subprocess.run(
         [
             "uv",
@@ -52,8 +61,10 @@ def warehouse_ready() -> None:
             "--exclude",
             "tag:elementary",
             "--select",
+            "+dim_date +dim_product +dim_loan +dim_borrower "
+            "+dim_loan_current_state +fct_loan_state_event "
             "+fct_loan_origination +fct_loan_lifecycle +fct_payment "
-            "+dim_loan_current_state +mart_risk_vintage_curve +mart_risk_prepayment_speed",
+            "+mart_risk_vintage_curve +mart_risk_prepayment_speed",
         ],
         cwd=REPO_ROOT,
         env={**os.environ, "DBT_PROFILES_DIR": str(REPO_ROOT)},

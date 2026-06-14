@@ -5,7 +5,7 @@
 -- schema (dwh / mart_risk / mart_finance / ...).
 select
     schema_name as layer,
-    table_name as model,
+    table_name as model_name,
     estimated_size as row_count,
     column_count,
     estimated_size * column_count as cell_count

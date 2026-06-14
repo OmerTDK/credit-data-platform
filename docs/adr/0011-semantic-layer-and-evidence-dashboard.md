@@ -70,12 +70,17 @@ these facts). `default_rate` (defined on the lifecycle model) is groupable by
 `credit_tier` (defined on the originations model) through the shared `loan`
 entity — the cross-model join is the whole point of a semantic layer.
 
-**Two pinned values guard against drift** (`tests/test_semantic_layer.py`):
-`origination_volume = 430,503,900.00` (asserted to the cent via `mf query --csv`)
-and `default_rate = 0.055` (660 / 12,000). Both are cross-checked against an
-independent direct DuckDB derivation so the pin itself cannot go stale. Kill-test
-verified: mutating the `origination_principal` measure to `principal_amount + 1`
-fails the pin.
+**All 7 governed metric values are pinned** (`tests/test_semantic_layer.py`),
+each cross-checked against an independent direct DuckDB derivation so the pins
+cannot go stale: `origination_volume = 430,503,900.00` (to the cent, via
+`mf query --csv`; SUM over 5,397 amortizing loans — credit cards carry NULL
+`principal_amount`), `default_rate = 0.055` (660 / 12,000; component metrics
+`defaulted_loans` and `lifecycle_loans` pinned separately to catch
+denominator-source swaps), `cpr` (book-level 1 − (1−SMM)¹²; exponent mutant
+caught), `portfolio_yield`, `delinquency_rate`, `avg_balance`, and
+`vintage_loss_curve`. Kill-test verified (manual, one-time): mutating
+`origination_principal` to `principal_amount + 1` fails the `origination_volume`
+pin. The pin tests are the repeatable CI gate for all 7 metrics.
 
 ### BI: Evidence (evidence.dev), built to a static site, query layer gated in CI
 
