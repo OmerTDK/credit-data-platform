@@ -1,0 +1,5 @@
+product_type,lgd_rate,lgd_source_note
+personal_loan,0.92,recovery_rate=0.08 per calibration.py; unsecured
+auto_loan,0.60,vehicle collateral; stylized
+mortgage,0.25,real estate collateral; stylized
+credit_card,0.95,revolving unsecured; higher collection cost

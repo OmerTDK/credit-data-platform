@@ -56,7 +56,22 @@ def dwh_build() -> subprocess.CompletedProcess[str]:
         f"loanbook generate failed (exit {generated.returncode}):\n{generated.stderr}"
     )
     DUCKDB_FILE.parent.mkdir(parents=True, exist_ok=True)
-    return _run_in_repo(["uv", "run", "dbt", "build", "--select", "staging intermediate dwh"])
+    # Build the DWH plus its ancestors. The bare `intermediate` selector also
+    # pulls in the ECL and risk intermediates, which depend on the ECL seeds and
+    # the mart_risk tables. Select the DWH facts/dims with `+...` so every
+    # ancestor (staging, intermediate, seeds) is built, but stop short of the
+    # downstream risk and ECL marts (those have their own build fixtures).
+    return _run_in_repo(
+        [
+            "uv",
+            "run",
+            "dbt",
+            "build",
+            "--select",
+            "+dim_date +dim_product +dim_loan +dim_borrower +dim_loan_current_state "
+            "+fct_loan_origination +fct_payment +fct_loan_state_event +fct_loan_lifecycle",
+        ]
+    )
 
 
 def test_dwh_build_succeeds(dwh_build: subprocess.CompletedProcess[str]) -> None:

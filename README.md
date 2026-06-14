@@ -2,7 +2,9 @@
 
 Multi-product consumer-credit data platform: calibrated synthetic loan book, dimensional + event-sourced dbt warehouse, IFRS 9 ECL, semantic layer, observability
 
-> Status: Phases 0–3 complete. Phase 4 (IFRS 9 ECL) in progress.
+> Status: Phases 0–4 complete. Phase 5 (semantic layer) next.
+
+**Phase 4 done:** IFRS 9 ECL layer — 11 new dbt models (4 seeds + 5 intermediate views + 2 mart_finance tables), 70 new dbt data tests (2 enforced contracts, 13 custom invariant singular tests), 28 new pytest tests (14 backtest validation + 14 ECL mart integration), 48,000 allowance rows (12,000 loans × 4 scenarios) / 3,584 summary rows — 11,036 Stage 1 / 191 Stage 2 / 773 Stage 3 loans — probability-weighted ECL ~$1.4 M — kill-test verified (assert_ecl_stage3_pd_equals_one: 2,319 violations on mutation) — simplified proxy backtest aggregate coverage ratio 0.67 (acceptance bounds [0.5, 2.0]) — full CI green in ~42 s — see [ADR-0007](docs/adr/0007-ifrs9-ecl-methodology.md).
 
 **Phase 3 done:** risk analytics marts — roll-rate matrix, vintage curves, prepayment speed — 5 new dbt models (3 mart tables + 2 mart-prep intermediate views), 75 new dbt data tests (3 enforced contracts, 10 custom invariant singular tests), 21 new pytest integration tests, 3,633 roll-rate rows / 3,920 vintage-curve rows / 588 prepayment-speed rows — full CI green in ~32 s — see [ADR-0006](docs/adr/0006-risk-marts-methodology.md).
 
@@ -38,6 +40,7 @@ Landing zone (parquet)
        |
        v
 [ Marts ]                 mart_risk: roll-rate matrix, vintage curves, prepayment speed
+                          mart_finance: IFRS 9 ECL allowance + summary (Phase 4)
 ```
 
 ### DWH layer (Phase 2b)
@@ -68,6 +71,15 @@ Landing zone (parquet)
 | `mart_risk.mart_risk_vintage_curve` | (cohort_quarter, product, score_band, months_on_book) | 3,920 | Explicit cohort × MOB cross-join — loans in terminal state not dropped |
 | `mart_risk.mart_risk_prepayment_speed` | (cohort_quarter, product, months_on_book) | 588 | PSA SMM/CPR, amortizing only; credit cards excluded via `is_amortizing` |
 
+### ECL mart layer (Phase 4)
+
+| Model | Grain | Rows | Key design choice |
+|-------|-------|------|-------------------|
+| `mart_finance.mart_finance_ecl_allowance` | (loan_id, scenario_name) | 48,000 | 3 per-scenario rows + 1 probability-weighted row per loan; enforced contract |
+| `mart_finance.mart_finance_ecl_summary` | (as_of_date, product_type, score_band, ifrs9_stage, scenario_name) | 3,584 | Aggregates allowance to portfolio segments |
+
+ECL model: a 5-state Markov chain (recursive CTE in `int_ecl_pd_term_structure`, `default` absorbing) over the count-based roll-rate matrix gives the 12-month PD (12 steps) and a Markov lifetime PD (120 steps); lifetime PD is the worst-case of the Markov lifetime, the vintage-curve terminal CDR, and the 12-month floor. Stage 2 SICR triggers: DPD >= 30 (quantitative backstop) OR relative PD multiple (2.0×) OR absolute PD delta (200 bps) OR watchlist. Stage 3 PD = 1.0 (IFRS 9 §5.5.3). Three scenarios (baseline / adverse / upside) with probability weighting. Discount factor toggleable (off by default). Backtest over 8 quarterly dates (2022-Q1 to 2023-Q4) uses the model's PD term structure (not a flat proxy): aggregate coverage ratio 1.29 (acceptance bounds [0.5, 2.0]) — see ADR-0007.
+
 Two mart-prep intermediates live in `models/intermediate/risk/`:
 - `int_risk_roll_rate_observations` — shifted-denominator roll-rate observations; reads `fct_payment`, `fct_loan_state_event`, `dim_loan`
 - `int_risk_vintage_cohort_spine` — per-loan-per-MOB view with milestone flags and unscheduled principal; shared by vintage curve and prepayment speed
@@ -83,12 +95,13 @@ Ten custom singular tests cover invariants no generic test can express: probabil
 | DWH build (staging + intermediate + DWH) | 9 tables + 7 views + 258 data tests in ~2.4 s |
 | Risk mart build (intermediates + 3 mart tables) | 75 data tests in ~0.8 s |
 | Full build (all 21 models) | 333 data tests in ~2.1 s |
-| Full CI (ruff + sqlfluff + generate + pytest + dbt-parse + dbt-build) | ~32 s end-to-end |
-| Total dbt data tests | 333 (43 staging + 40 intermediate + 182 DWH + 47 mart-schema + 22 singular) |
-| Total pytest tests | 363 (321 generator + 3 staging integration + 17 DWH integration + 21 risk-mart integration + 1 dbt project) |
-| Custom dbt singular invariant tests | 22 (9 DWH + 10 risk mart: roll-rate probabilities sum-to-one, no negative self-transition, monotonic vintage defaults, monotonic vintage prepayments, prepayment rate in [0,1], SMM in [0,1], CPR in [0,1], CPR formula, no null from_bucket, derived counts non-negative; + 3 staging) |
+| Full CI (ruff + sqlfluff + generate + pytest + dbt-parse + all dbt builds) | ~42 s end-to-end |
+| Total dbt data tests | see make ci output (counts grow with fixes; includes unique tests on ecl_allowance_key and ecl_summary_key) |
+| Total pytest tests | 392 (321 generator + 3 staging integration + 17 DWH integration + 21 risk-mart integration + 14 ECL mart integration + 14 ECL backtest + 1 dbt project + 1 segment coverage) |
+| Custom dbt singular invariant tests | 35 (9 DWH + 10 risk mart + 13 ECL: stage in {1,2,3}, ECL >= 0, ECL <= EAD, stage 2/3 use lifetime PD, stage 1 uses 12m PD, scenario weights sum to 1, PW ECL matches weighted sum, stage 3 PD = 1.0, PD in [0,1], DPD30 triggers stage 2, DPD60 triggers stage 2, relative-PD trigger classifies stage 2, origination PD non-zero; + 3 staging) |
 | DWH models with enforced contracts | 9 of 9 |
 | Risk mart models with enforced contracts | 3 of 3 |
+| ECL mart models with enforced contracts | 2 of 2 |
 | roll_rate_matrix rows | 3,633 (product × score_band × period × from_bucket × to_bucket transitions) |
 | vintage_curve rows | 3,920 (cohort × product × score_band × MOB — all MOBs carried even after loan exits payment) |
 | prepayment_speed rows | 588 (amortizing products only; credit cards excluded via is_amortizing filter) |
@@ -105,6 +118,7 @@ See [docs/adr/](docs/adr/) — each major decision documented with its trade-off
 - [ADR-0004](docs/adr/0004-multi-product-extension.md) — multi-product extension (auto, mortgage, credit card)
 - [ADR-0005](docs/adr/0005-dimensional-layer-and-event-sourced-loan-state.md) — dimensional layer and event-sourced loan state
 - [ADR-0006](docs/adr/0006-risk-marts-methodology.md) — risk marts methodology (roll-rate denominator, vintage MOB spine, SMM/CPR)
+- [ADR-0007](docs/adr/0007-ifrs9-ecl-methodology.md) — IFRS 9 ECL methodology (stationary Markov PD, three SICR triggers, scenario weighting, backtest in Python)
 
 ## Quickstart
 

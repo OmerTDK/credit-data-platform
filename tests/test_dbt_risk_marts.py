@@ -36,7 +36,12 @@ def _run_in_repo(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 @pytest.fixture(scope="module")
 def risk_mart_build() -> subprocess.CompletedProcess[str]:
-    """Build the full pipeline through risk marts."""
+    """Build the risk marts and every ancestor.
+
+    Ancestor selection (`+model`) makes this fixture independent of pytest
+    ordering: it builds staging, intermediate, and DWH before the risk marts
+    regardless of whether the DWH fixture has run.
+    """
     return _run_in_repo(
         [
             "uv",
@@ -44,9 +49,7 @@ def risk_mart_build() -> subprocess.CompletedProcess[str]:
             "dbt",
             "build",
             "--select",
-            "int_risk_roll_rate_observations int_risk_vintage_cohort_spine "
-            "mart_risk_roll_rate_matrix mart_risk_vintage_curve "
-            "mart_risk_prepayment_speed",
+            "+mart_risk_roll_rate_matrix +mart_risk_vintage_curve +mart_risk_prepayment_speed",
         ]
     )
 

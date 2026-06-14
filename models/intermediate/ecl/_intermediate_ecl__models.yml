@@ -1,0 +1,113 @@
+version: 2
+
+models:
+  - name: int_ecl_pd_term_structure
+    description: >
+      Mart-prep intermediate. PD term structure per (product_type, score_band,
+      starting_bucket). The roll-rate matrix supplies count-based one-step
+      transition probabilities; a recursive Markov chain (default absorbing)
+      propagates the bucket distribution to derive the 12-month PD (12 steps)
+      and a Markov lifetime PD (120 steps). Lifetime PD is the worst-case of the
+      Markov lifetime PD, the vintage-curve cohort-averaged terminal CDR, and
+      the 12-month PD floor. Segments with no observed delinquency transitions
+      produce no rows (the joining loans carry PD 0 via COALESCE downstream).
+    columns:
+      - name: product_type
+        description: Credit product type.
+        data_tests:
+          - not_null
+      - name: score_band
+        description: Borrower score band at origination.
+        data_tests:
+          - not_null
+      - name: starting_bucket
+        description: Delinquency bucket at the ECL reference date.
+        data_tests:
+          - not_null
+      - name: pd_12m
+        description: 12-month PD clamped to [0, 1].
+        data_tests:
+          - not_null
+      - name: pd_lifetime
+        description: Lifetime PD clamped to [0, 1] and floored at pd_12m.
+        data_tests:
+          - not_null
+
+  - name: int_ecl_staging
+    description: >
+      Mart-prep intermediate. IFRS 9 stage assignment per loan at the ECL
+      reference date. One row per loan. Stage 3 = credit-impaired. Stage 2 =
+      SICR (quantitative backstop DPD >= 30, relative PD multiple, absolute PD
+      delta, or watchlist). Stage 1 = no SICR. Paid-off zero-balance loans
+      flagged with is_paid_off_zero_balance = TRUE.
+    columns:
+      - name: loan_id
+        description: Natural key of the loan.
+        data_tests:
+          - unique
+          - not_null
+      - name: ifrs9_stage
+        description: IFRS 9 stage (1, 2, or 3).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3]
+      - name: origination_pd_rate
+        description: >
+          Lifetime PD at origination for this (product_type, score_band) from
+          the vintage curve at starting_bucket = 'current'. Used for SICR
+          relative-PD and absolute-delta triggers.
+        data_tests:
+          - not_null
+
+  - name: int_ecl_ead_by_loan
+    description: >
+      Mart-prep intermediate. Exposure at Default per loan. Amortizing:
+      ending_balance_amount. Credit card: balance + CCF * undrawn commitment.
+      Stage 3: EAD reduced by post-default recovery already received.
+    columns:
+      - name: loan_id
+        description: Natural key of the loan.
+        data_tests:
+          - unique
+          - not_null
+      - name: ead_amount
+        description: EAD in dollars. Always >= 0.
+        data_tests:
+          - not_null
+
+  - name: int_ecl_lgd_by_loan
+    description: >
+      Mart-prep intermediate. Base LGD per loan from ecl_lgd_parameters seed.
+      Scenario scalars applied downstream in int_ecl_components.
+    columns:
+      - name: loan_id
+        description: Natural key of the loan.
+        data_tests:
+          - unique
+          - not_null
+      - name: base_lgd_rate
+        description: Base LGD rate from seed. Clamped to [0, 1] in source data.
+        data_tests:
+          - not_null
+
+  - name: int_ecl_components
+    description: >
+      Mart-prep intermediate. Full ECL calculation per (loan_id, scenario_name).
+      Cross-joins staging + PD + LGD + EAD with ecl_scenario_weights to produce
+      3 rows per loan (baseline, adverse, upside). ECL = pd_rate * lgd_rate *
+      ead_amount * discount_factor.
+    columns:
+      - name: loan_id
+        description: Natural key of the loan.
+        data_tests:
+          - not_null
+      - name: scenario_name
+        description: Scenario name.
+        data_tests:
+          - not_null
+      - name: ecl_amount
+        description: Expected Credit Loss in dollars.
+        data_tests:
+          - not_null

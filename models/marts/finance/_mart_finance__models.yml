@@ -1,0 +1,174 @@
+version: 2
+
+models:
+  - name: mart_finance_ecl_allowance
+    description: >
+      IFRS 9 ECL allowance per loan and scenario. Grain: one row per
+      (loan_id, scenario_name). Contains 3 per-scenario rows (baseline, adverse,
+      upside) plus 1 probability-weighted row per loan (scenario_name =
+      'probability_weighted'). Full-refresh only — ECL is a point-in-time stock.
+      Paid-off zero-balance loans are included with ecl_amount = 0 and
+      is_terminal = TRUE for auditability.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: ecl_allowance_key
+        description: Surrogate key — MD5 over (loan_id, scenario_name). Enforces grain uniqueness.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: loan_id
+        description: Natural key of the loan.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: as_of_date
+        description: ECL reference date (last payment report_month from the loan).
+        data_type: date
+        data_tests:
+          - not_null
+      - name: ifrs9_stage
+        description: IFRS 9 ECL stage (1 = no SICR, 2 = SICR, 3 = credit-impaired).
+        data_type: integer
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3]
+      - name: scenario_name
+        description: Scenario name (baseline, adverse, upside, probability_weighted).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [baseline, adverse, upside, probability_weighted]
+      - name: scenario_weight
+        description: Probability weight of the scenario (sums to 1.0 across baseline/adverse/upside per loan; 1.0 for probability_weighted row).
+        data_type: decimal(10, 8)
+        data_tests:
+          - not_null
+      - name: pd_rate
+        description: Probability of Default for this loan in this scenario, clamped to [0, 1].
+        data_type: decimal(10, 8)
+        data_tests:
+          - not_null
+      - name: pd_horizon
+        description: PD horizon used ('12m' for Stage 1, 'lifetime' for Stage 2/3).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['12m', 'lifetime']
+      - name: lgd_rate
+        description: Loss Given Default for this loan in this scenario, clamped to [0, 1].
+        data_type: decimal(10, 8)
+        data_tests:
+          - not_null
+      - name: ead_amount
+        description: Exposure at Default in dollars. Scenario-agnostic.
+        data_type: decimal(18, 6)
+        data_tests:
+          - not_null
+      - name: discount_factor
+        description: Discount factor applied to ECL (1.0 when ecl_include_discount_factor = false).
+        data_type: decimal(10, 8)
+        data_tests:
+          - not_null
+      - name: ecl_amount
+        description: >
+          Expected Credit Loss in dollars.
+          For scenario rows (baseline/adverse/upside): pd_rate * lgd_rate * ead_amount * discount_factor.
+          For the probability_weighted row: probability-weighted average of the three scenario ecl_amounts
+          (NOT the product of the marginal pd_rate * lgd_rate * ead_amount columns, which are themselves
+          probability-weighted averages of component inputs).
+        data_type: decimal(18, 6)
+        data_tests:
+          - not_null
+      - name: is_terminal
+        description: True for paid-off / defaulted / recovery-complete loans. ECL = 0 for paid-off zero-balance loans.
+        data_type: boolean
+        data_tests:
+          - not_null
+
+  - name: mart_finance_ecl_summary
+    description: >
+      IFRS 9 ECL summary aggregated to grain:
+      (as_of_date, product_type, score_band, ifrs9_stage, scenario_name).
+      Includes all 4 scenario_name values (baseline, adverse, upside,
+      probability_weighted). coverage_rate = total_ecl_amount / total_ead_amount.
+
+      Note: this mart references mart_finance_ecl_allowance (a same-domain mart),
+      which is a documented exception to the Marts:DWH-only rule in dbt-standards.md.
+      The probability_weighted rows and enforced contract columns on ecl_allowance_key
+      are expressed in mart_finance_ecl_allowance; duplicating that logic here would
+      be worse than the mart-to-mart dependency. This exception is intentional and
+      limited to same-domain finance mart aggregation chains.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: ecl_summary_key
+        description: Surrogate key — MD5 over (as_of_date, product_type, score_band, ifrs9_stage, scenario_name). Enforces grain uniqueness.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: as_of_date
+        description: ECL reference date.
+        data_type: date
+        data_tests:
+          - not_null
+      - name: product_type
+        description: Credit product type.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [personal_loan, auto_loan, mortgage, credit_card]
+      - name: score_band
+        description: Borrower score band at origination.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [prime_plus, prime, near_prime, subprime, super_prime]
+      - name: ifrs9_stage
+        description: IFRS 9 ECL stage.
+        data_type: integer
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3]
+      - name: scenario_name
+        description: Scenario name.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [baseline, adverse, upside, probability_weighted]
+      - name: loan_count
+        description: Count of distinct loans in this segment.
+        data_type: bigint
+        data_tests:
+          - not_null
+      - name: total_ead_amount
+        description: Sum of EAD amounts for loans in this segment.
+        data_type: decimal(18, 6)
+        data_tests:
+          - not_null
+      - name: total_ecl_amount
+        description: Sum of ECL amounts for loans in this segment.
+        data_type: decimal(18, 6)
+        data_tests:
+          - not_null
+      - name: coverage_rate
+        description: total_ecl_amount / total_ead_amount. NULL when total_ead_amount = 0.
+        data_type: decimal(10, 6)

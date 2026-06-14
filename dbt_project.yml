@@ -33,3 +33,34 @@ models:
         +schema: mart_risk
       finance:
         +schema: mart_finance
+
+vars:
+  # ecl_as_of_date and ecl_sicr_dpd_threshold intentionally omitted:
+  # - ECL reference date is derived from dim_loan_current_state.state_as_of_month, not a var.
+  # - SICR DPD backstop is bucket-based (dpd_30, dpd_60), not a configurable numeric threshold.
+  ecl_sicr_lifetime_pd_multiple: 2.0
+  ecl_sicr_pd_delta_bp: 200
+  ecl_include_discount_factor: false
+  ecl_credit_card_behavioural_maturity_months: 24
+
+seeds:
+  credit_platform:
+    ecl_lgd_parameters:
+      +column_types:
+        product_type: VARCHAR
+        lgd_rate: DOUBLE
+        lgd_source_note: VARCHAR
+    ecl_ead_parameters:
+      +column_types:
+        product_type: VARCHAR
+        ccf_rate: DOUBLE
+        ccf_source_note: VARCHAR
+    ecl_scenario_weights:
+      +column_types:
+        scenario_name: VARCHAR
+        scenario_weight: DOUBLE
+        pd_scalar: DOUBLE
+        lgd_scalar: DOUBLE
+    ecl_watchlist:
+      +column_types:
+        loan_id: VARCHAR
