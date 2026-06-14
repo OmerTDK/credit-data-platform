@@ -61,12 +61,17 @@ def dwh_build() -> subprocess.CompletedProcess[str]:
     # the mart_risk tables. Select the DWH facts/dims with `+...` so every
     # ancestor (staging, intermediate, seeds) is built, but stop short of the
     # downstream risk and ECL marts (those have their own build fixtures).
+    # Exclude tag:elementary — the Elementary anomaly/schema tests on fct_payment
+    # need the full Elementary model layer (built only in the complete dbt build
+    # the Dagster materialization runs), not this scoped DWH build.
     return _run_in_repo(
         [
             "uv",
             "run",
             "dbt",
             "build",
+            "--exclude",
+            "tag:elementary",
             "--select",
             "+dim_date +dim_product +dim_loan +dim_borrower +dim_loan_current_state "
             "+fct_loan_origination +fct_payment +fct_loan_state_event +fct_loan_lifecycle",

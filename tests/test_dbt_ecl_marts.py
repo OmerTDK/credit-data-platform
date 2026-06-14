@@ -44,12 +44,17 @@ def ecl_mart_build() -> subprocess.CompletedProcess[str]:
     staging -> intermediate -> dwh -> int_risk -> mart_risk -> int_ecl ->
     mart_finance — so the build never fails on a missing upstream schema.
     """
+    # Exclude tag:elementary — the Elementary tests on mart_finance_ecl_summary
+    # need the full Elementary model layer (built only in the complete dbt build
+    # the Dagster materialization runs), not this scoped ECL build.
     return _run_in_repo(
         [
             "uv",
             "run",
             "dbt",
             "build",
+            "--exclude",
+            "tag:elementary",
             "--select",
             "+mart_finance_ecl_allowance +mart_finance_ecl_summary",
         ]

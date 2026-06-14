@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install lint lint-sql test generate dbt-parse dbt-run dbt-test dbt-build-staging ci docker-build docker-test
+.PHONY: help install lint lint-sql test generate dbt-parse dbt-run dbt-test dbt-build-staging ci docker-build docker-test dagster-materialize dagster-dev elementary-report security
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z][a-zA-Z0-9_-]*:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "%-16s %s\n", $$1, $$2}'
@@ -37,9 +37,12 @@ dbt-build-staging: ## Build and test the staging layer against the local DuckDB 
 	mkdir -p data/local
 	DBT_PROFILES_DIR=. uv run dbt build --select staging
 
+# Scoped builds exclude tag:elementary — Elementary's anomaly/schema tests need
+# the full Elementary model layer, which is built only in the complete dbt build
+# the Dagster materialization runs (make dagster-materialize).
 dbt-build-dwh: ## Build and test the DWH dimensional layer and its ancestors
 	mkdir -p data/local
-	DBT_PROFILES_DIR=. uv run dbt build --select \
+	DBT_PROFILES_DIR=. uv run dbt build --exclude tag:elementary --select \
 		+dim_date +dim_product +dim_loan +dim_borrower +dim_loan_current_state \
 		+fct_loan_origination +fct_payment +fct_loan_state_event +fct_loan_lifecycle
 
@@ -48,15 +51,33 @@ validate-ecl-params: ## Validate ECL seed parameters before dbt build
 
 dbt-build-risk: ## Build risk mart models and their ancestors
 	mkdir -p data/local
-	DBT_PROFILES_DIR=. uv run dbt build --select \
+	DBT_PROFILES_DIR=. uv run dbt build --exclude tag:elementary --select \
 		+mart_risk_roll_rate_matrix +mart_risk_vintage_curve +mart_risk_prepayment_speed
 
 dbt-build-ecl: validate-ecl-params ## Build ECL marts and their ancestors (incl. mart_risk)
 	mkdir -p data/local
-	DBT_PROFILES_DIR=. uv run dbt build --select \
+	DBT_PROFILES_DIR=. uv run dbt build --exclude tag:elementary --select \
 		+mart_finance_ecl_allowance +mart_finance_ecl_summary
 
-ci: lint lint-sql generate test dbt-parse dbt-build-staging dbt-build-dwh dbt-build-risk dbt-build-ecl ## Run the full CI suite locally
+dagster-materialize: ## Materialize all dbt assets via Dagster (DbtCliResource) and run the asset-check gates
+	mkdir -p data/local
+	ELEMENTARY_CAPTURE=1 DBT_PROFILES_DIR=. uv run python -m orchestration.materialize
+
+dagster-dev: ## Launch the Dagster UI to browse the asset graph and checks
+	DBT_PROFILES_DIR=. uv run dagster dev -m orchestration.definitions
+
+elementary-report: ## Generate the Elementary observability HTML report from the dbt run/test results
+	mkdir -p data/local artifacts
+	CREDIT_PLATFORM_DUCKDB="$(CURDIR)/data/local/credit_platform.duckdb" \
+		DBT_PROFILES_DIR=. uv run edr report \
+		--project-dir . --profiles-dir . --profile-target dev \
+		--file-path artifacts/elementary_report.html --open-browser false
+
+security: ## Run the security scanners (bandit SAST + pip-audit dependency CVEs)
+	uv run bandit -r src -c pyproject.toml
+	uv run pip-audit
+
+ci: lint lint-sql generate test dbt-parse dbt-build-staging dbt-build-dwh dbt-build-risk dbt-build-ecl dagster-materialize ## Run the full CI suite locally
 
 docker-build: ## Build the project image
 	docker build -t credit-data-platform .

@@ -8,3 +8,17 @@ credit_platform:
       type: duckdb
       path: data/local/credit_platform.duckdb
       threads: 4
+
+# The Elementary edr CLI reads its observability tables through a profile named
+# `elementary`. It points at the same local DuckDB warehouse, at the schema
+# Elementary writes to. edr runs from its own internal dbt project directory, so
+# the path MUST be absolute — provided via CREDIT_PLATFORM_DUCKDB (the make
+# target exports the repo-relative path resolved to absolute).
+elementary:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('CREDIT_PLATFORM_DUCKDB') }}"
+      schema: elementary
+      threads: 4

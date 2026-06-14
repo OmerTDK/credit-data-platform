@@ -42,12 +42,17 @@ def risk_mart_build() -> subprocess.CompletedProcess[str]:
     ordering: it builds staging, intermediate, and DWH before the risk marts
     regardless of whether the DWH fixture has run.
     """
+    # Exclude tag:elementary — the Elementary tests on the fct_payment ancestor
+    # need the full Elementary model layer (built only in the complete dbt build
+    # the Dagster materialization runs), not this scoped risk build.
     return _run_in_repo(
         [
             "uv",
             "run",
             "dbt",
             "build",
+            "--exclude",
+            "tag:elementary",
             "--select",
             "+mart_risk_roll_rate_matrix +mart_risk_vintage_curve +mart_risk_prepayment_speed",
         ]

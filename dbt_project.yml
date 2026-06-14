@@ -4,6 +4,8 @@ profile: credit_platform
 
 flags:
   send_anonymous_usage_stats: false
+  # Required from dbt 1.8+ for Elementary's materialization overrides.
+  require_explicit_package_overrides_for_builtin_materializations: false
 
 model-paths: ["models"]
 seed-paths: ["seeds"]
@@ -17,6 +19,8 @@ clean-targets:
   - dbt_packages
 
 models:
+  elementary:
+    +schema: elementary
   credit_platform:
     staging:
       +materialized: view
@@ -42,6 +46,15 @@ vars:
   ecl_sicr_pd_delta_bp: 200
   ecl_include_discount_factor: false
   ecl_credit_card_behavioural_maturity_months: 24
+
+  # Elementary result-capture (on-run-end hooks) is OFF by default so the scoped
+  # dbt builds (dbt-build-dwh/risk/ecl) don't require the Elementary model layer.
+  # The full Dagster materialization exports ELEMENTARY_CAPTURE=1, which builds
+  # the Elementary models and enables capture so the observability report has data.
+  disable_run_results: "{{ env_var('ELEMENTARY_CAPTURE', '0') != '1' }}"
+  disable_tests_results: "{{ env_var('ELEMENTARY_CAPTURE', '0') != '1' }}"
+  disable_dbt_artifacts_autoupload: "{{ env_var('ELEMENTARY_CAPTURE', '0') != '1' }}"
+  disable_dbt_invocation_autoupload: "{{ env_var('ELEMENTARY_CAPTURE', '0') != '1' }}"
 
 seeds:
   credit_platform:
