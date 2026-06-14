@@ -60,7 +60,9 @@ and pip-installable, so it also runs locally via `make security`.
 locked environment `uv` produces, and has a cleaner licensing story.
 
 **trufflehog instead of gitleaks.** Both are solid; gitleaks has a well-supported
-GitHub Action, is free for personal accounts, and needs no extra configuration.
+GitHub Action and is free for personal accounts. The `security` job requires
+`permissions: pull-requests: read` so `gitleaks-action@v3` can call the PR
+commits API for diff-aware scanning on `pull_request` events.
 
 **Fold security into the existing `lint-test` job.** Rejected — a separate job
 runs in parallel (faster signal) and is trivially copy-pasteable into other

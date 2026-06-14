@@ -17,9 +17,11 @@ def test_definitions_load() -> None:
 
 def test_dbt_assets_are_exposed() -> None:
     asset_keys = {spec.key for spec in defs.resolve_all_asset_specs()}
-    # The dbt project has 28 models; every one becomes a Dagster asset. The
-    # default translator prefixes the key with the model's schema path.
-    assert len(asset_keys) >= 28
+    # The dbt project contributes 35 credit-platform assets (28 models + 4 seeds
+    # + 3 sources). Elementary adds ~30 internal model assets on top, so the total
+    # with Elementary installed is 65. Assert >= 35 so the credit-platform slice is
+    # always present even as Elementary's internal model count evolves.
+    assert len(asset_keys) >= 35
     expected = {
         dg.AssetKey(["mart_finance", "mart_finance_ecl_allowance"]),
         dg.AssetKey(["mart_finance", "mart_finance_ecl_summary"]),

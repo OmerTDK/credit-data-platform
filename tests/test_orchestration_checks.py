@@ -94,8 +94,37 @@ def test_stage_ecl_positive_catches_zeroed_stage1(warehouse: Path, tmp_path: Pat
     assert isinstance(outcome, CheckOutcome)
 
 
+def test_stage_ecl_positive_catches_zeroed_stage2(warehouse: Path, tmp_path: Path) -> None:
+    """Kill-test: a portfolio whose Stage 2 ECL collapses to zero must FAIL the gate.
+
+    Kills the mutant `passed = stage1_min > 0` (Stage 2 branch removed) and the
+    mutant `filter (where ifrs9_stage = 2)` -> `filter (where ifrs9_stage = 3)`.
+    Stage 1 ECL is left intact so stage1_min > 0, proving the two filter columns
+    are independently measuring different stages.
+    """
+    mutated = tmp_path / "mutated_stage2.duckdb"
+    shutil.copy(warehouse, mutated)
+    with duckdb.connect(str(mutated)) as connection:
+        connection.execute(
+            "UPDATE mart_finance.mart_finance_ecl_summary "
+            "SET total_ecl_amount = 0 WHERE ifrs9_stage = 2"
+        )
+
+    outcome = check_ecl_stage_ecl_positive(mutated)
+    assert not outcome.passed
+    assert outcome.metadata["min_stage2_ecl"] == 0
+    assert outcome.metadata["min_stage1_ecl"] > 0  # Stage 1 unaffected
+
+
 def test_referential_integrity_catches_orphan_fact(warehouse: Path, tmp_path: Path) -> None:
-    """Kill-test: an orphan fact row (loan_id not in dim_loan) must FAIL the gate."""
+    """Kill-test: an orphan fact row (loan_id not in dim_loan) must FAIL the gate.
+
+    Deleting one dim_loan row creates orphans in all five loan-grained relations
+    simultaneously. The per-relation breakdown in metadata proves each relation is
+    individually wired — a mutant silently dropping any one relation from
+    LOAN_FACT_RELATIONS would leave that relation's count at 0, which this test
+    would catch.
+    """
     mutated = tmp_path / "orphan.duckdb"
     shutil.copy(warehouse, mutated)
     with duckdb.connect(str(mutated)) as connection:
@@ -106,3 +135,26 @@ def test_referential_integrity_catches_orphan_fact(warehouse: Path, tmp_path: Pa
     outcome = check_referential_integrity_facts_to_dims(mutated)
     assert not outcome.passed
     assert outcome.metadata["orphan_rows_total"] > 0
+    # Each relation must independently report orphans — proves no relation was silently dropped.
+    assert outcome.metadata["orphans_by_relation"]["fct_payment"] > 0
+    assert outcome.metadata["orphans_by_relation"]["fct_loan_state_event"] > 0
+    assert outcome.metadata["orphans_by_relation"]["fct_loan_lifecycle"] > 0
+    assert outcome.metadata["orphans_by_relation"]["fct_loan_origination"] > 0
+    assert outcome.metadata["orphans_by_relation"]["mart_finance_ecl_allowance"] > 0
+
+
+def test_volume_sanity_catches_empty_mart(warehouse: Path, tmp_path: Path) -> None:
+    """Kill-test: an empty ECL allowance mart must FAIL the volume gate.
+
+    Kills the mutant `passed = row_count <= ECL_ALLOWANCE_MAX_ROWS` (lower-bound
+    removed). An empty mart has 0 rows which is below ECL_ALLOWANCE_MIN_ROWS;
+    the gate must fire.
+    """
+    mutated = tmp_path / "empty_mart.duckdb"
+    shutil.copy(warehouse, mutated)
+    with duckdb.connect(str(mutated)) as connection:
+        connection.execute("DELETE FROM mart_finance.mart_finance_ecl_allowance")
+
+    outcome = check_volume_sanity_ecl_allowance(mutated)
+    assert not outcome.passed
+    assert outcome.metadata["row_count"] == 0

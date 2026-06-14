@@ -33,6 +33,8 @@ ECL_ALLOWANCE_MAX_ROWS = 120_000
 LOAN_FACT_RELATIONS = (
     "dwh.fct_payment",
     "dwh.fct_loan_state_event",
+    "dwh.fct_loan_lifecycle",
+    "dwh.fct_loan_origination",
     "mart_finance.mart_finance_ecl_allowance",
 )
 
@@ -94,8 +96,9 @@ def _per_scenario_stage_minima(warehouse: Path) -> tuple[float, float]:
 def check_referential_integrity_facts_to_dims(warehouse: Path) -> CheckOutcome:
     """Every fact loan_id must resolve to a dim_loan row.
 
-    Covers the three loan-grained facts/marts that carry a loan_id foreign key:
-    fct_payment, fct_loan_state_event, and mart_finance_ecl_allowance.
+    Covers the five loan-grained facts/marts that carry a loan_id foreign key:
+    fct_payment, fct_loan_state_event, fct_loan_lifecycle, fct_loan_origination,
+    and mart_finance_ecl_allowance.
     """
     counts = {
         relation.split(".")[-1]: _orphan_count(warehouse, relation)

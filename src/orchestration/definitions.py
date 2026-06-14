@@ -43,9 +43,7 @@ dbt_resource = DbtCliResource(project_dir=dbt_project)
 
 
 @dbt_assets(manifest=dbt_project.manifest_path)
-def credit_platform_dbt_assets(
-    context: dg.AssetExecutionContext, dbt: DbtCliResource
-) -> dg.MaterializeResult:
+def credit_platform_dbt_assets(context: dg.AssetExecutionContext, dbt: DbtCliResource) -> None:
     yield from dbt.cli(["build"], context=context).stream()
 
 
