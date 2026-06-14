@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install lint lint-sql test generate dbt-parse dbt-run dbt-test dbt-build-staging ci docker-build docker-test dagster-materialize dagster-dev elementary-report security
+.PHONY: help install lint lint-sql test generate dbt-parse dbt-run dbt-test dbt-build-staging ci docker-build docker-test dagster-materialize dagster-dev elementary-report security dbt-build-semantic semantic-validate semantic-query evidence-install evidence-sources evidence-build
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z][a-zA-Z0-9_-]*:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "%-16s %s\n", $$1, $$2}'
@@ -59,6 +59,33 @@ dbt-build-ecl: validate-ecl-params ## Build ECL marts and their ancestors (incl.
 	DBT_PROFILES_DIR=. uv run dbt build --exclude tag:elementary --select \
 		+mart_finance_ecl_allowance +mart_finance_ecl_summary
 
+# Semantic layer (MetricFlow). The time spine backs metric_time aggregation; the
+# semantic models / metrics are YAML, so they need no table build of their own.
+dbt-build-semantic: ## Build the MetricFlow time spine and the semantic-layer backing facts/marts
+	mkdir -p data/local
+	DBT_PROFILES_DIR=. uv run dbt build --exclude tag:elementary --select \
+		+metricflow_time_spine +fct_loan_origination +fct_loan_lifecycle +fct_payment \
+		+mart_risk_vintage_curve +mart_risk_prepayment_speed
+
+semantic-validate: ## Validate the MetricFlow semantic manifest against the DuckDB warehouse
+	DBT_PROFILES_DIR=. uv run mf validate-configs
+
+semantic-query: ## Smoke-query the headline governed metrics through MetricFlow
+	DBT_PROFILES_DIR=. uv run mf query --metrics origination_volume,default_rate,avg_balance
+	DBT_PROFILES_DIR=. uv run mf query --metrics default_rate --group-by loan__credit_tier
+
+# Evidence dashboard (BI-as-code). npm-based, so it is NOT part of `make ci`
+# (the Python CI is network-free). The query layer IS covered in CI via
+# tests/test_evidence_dashboard.py. These targets prove the static site builds.
+evidence-install: ## Install the Evidence (Node) dependencies
+	cd bi && npm install --no-audit --no-fund
+
+evidence-sources: ## Extract Evidence source queries from the DuckDB warehouse
+	cd bi && npm run sources
+
+evidence-build: ## Build the Evidence static site into bi/build (runs sources first)
+	cd bi && npm run sources && npm run build
+
 dagster-materialize: ## Materialize all dbt assets via Dagster (DbtCliResource) and run the asset-check gates
 	mkdir -p data/local
 	ELEMENTARY_CAPTURE=1 DBT_PROFILES_DIR=. uv run python -m orchestration.materialize
@@ -77,7 +104,7 @@ security: ## Run the security scanners (bandit SAST + pip-audit dependency CVEs)
 	uv run bandit -r src -c pyproject.toml
 	uv run pip-audit
 
-ci: lint lint-sql generate test dbt-parse dbt-build-staging dbt-build-dwh dbt-build-risk dbt-build-ecl dagster-materialize ## Run the full CI suite locally
+ci: lint lint-sql generate test dbt-parse dbt-build-staging dbt-build-dwh dbt-build-risk dbt-build-ecl dbt-build-semantic semantic-validate dagster-materialize ## Run the full CI suite locally
 
 docker-build: ## Build the project image
 	docker build -t credit-data-platform .

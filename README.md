@@ -2,7 +2,9 @@
 
 Multi-product consumer-credit data platform: calibrated synthetic loan book, dimensional + event-sourced dbt warehouse, IFRS 9 ECL, semantic layer, observability
 
-> Status: Phases 0–5 complete. Semantic layer next.
+> Status: Phases 0–6 complete. BigQuery prod target + Terraform IaC deferred (open GCP-account question).
+
+**Phase 6 done:** semantic layer + Evidence dashboard — a **MetricFlow semantic layer** (`models/semantic/`) defines **7 governed metrics once** over the dwh/marts (`default_rate`, `cpr`, `portfolio_yield`, `vintage_loss_curve`, `origination_volume`, `avg_balance`, `delinquency_rate`) plus building-block simple metrics, across 5 semantic models with vintage / product / credit_tier / delinquency_status dimensions. Queryable locally with `mf query` / `mf validate-configs` against DuckDB — `metricflow_duckdb_supported = true` for the open-source CLI (the dbt-docs "supported platforms" list is the *hosted* dbt Cloud Semantic Layer; the `mf` CLI ships a `DuckDbSqlPlanRenderer` and its own tutorial uses a DuckDB profile). **2 metric values pinned** from an independent warehouse derivation — `origination_volume = 430,503,900.00` (to the cent, via `mf query --csv`) and `default_rate = 0.055` (660 / 12,000) — so a metric-definition change fails CI; kill-test verified (`principal_amount + 1` mutant fails the pin). An **Evidence (evidence.dev) BI-as-code dashboard** (`bi/`) reads the same DuckDB warehouse and builds to an 87 MB static site (`evidence build`) with 4 pages — portfolio overview, vintage curves, risk-cohort drill-down, and a FinOps/cost view (rows × columns cost proxy from `duckdb_tables()`). The Node build is wired as `make evidence-build` (not in CI to keep CI network-free); the **query layer is gated in CI** via 10 pytest tests that execute every Evidence source query against the warehouse. **+22 pytest tests (403 → 425)**, full clean `make ci` green (425 passed; `mf` metrics validated 0 errors; Dagster materializes 465 nodes / 0 error) — BigQuery prod target + Terraform IaC remain deferred — see [ADR-0011](docs/adr/0011-semantic-layer-and-evidence-dashboard.md).
 
 **Phase 5 done:** orchestration + observability + security hardening — Dagster exposes the dbt project as **35 credit-platform assets** (28 models + 4 seeds + 3 sources, keyed by schema path) via `@dbt_assets`, materialized by running `dbt build` through `DbtCliResource` (managed subprocess, never a bare shell build). With the Elementary package installed, the Dagster asset graph shows 65 total assets (35 credit-platform + 30 Elementary internal models). **3 custom `@asset_check` quality gates** with ERROR/WARN severity: `ecl_stage_ecl_strictly_positive` (ERROR — Stage 1 = $1.50 M / Stage 2 = $0.92 M portfolio ECL must be > 0 in every scenario; the ADR-0007 regression, now CI-enforced), `facts_resolve_to_dim_loan` (ERROR — 0 orphan loan_ids across all 5 loan-grained fact tables), `ecl_allowance_volume_within_band` (WARN — 48,000 rows within band). Gate logic is pure functions with **5 total asset-check tests (3 unit + 4 kill)**: Stage 1 zeroing, Stage 2 zeroing, orphan fact (per-relation breakdown asserted), empty-mart volume. **Elementary** observability: 4 anomaly/schema tests on `fct_payment` + `mart_finance_ecl_summary`, 400 captured test results, a real 7.4 MB `edr report` HTML artifact published from CI. **Security CI layer**: bandit (Python SAST, 0 issues) + pip-audit (0 known CVEs) + gitleaks (secret scan, requires `pull-requests: read` permission) on every PR. Full Dagster materialization builds **464 dbt nodes** green; full CI green in ~100 s end-to-end — see [ADR-0008](docs/adr/0008-orchestration-dagster-asset-centric.md), [ADR-0009](docs/adr/0009-observability-elementary.md), [ADR-0010](docs/adr/0010-security-ci-layer.md).
 
@@ -48,6 +50,8 @@ Landing zone (parquet)
 [ Orchestration ]         Dagster @dbt_assets (DbtCliResource) + 3 asset-check gates (Phase 5)
 [ Observability ]         Elementary test-result / volume / schema monitors -> edr report
 [ Security CI ]           bandit + pip-audit + gitleaks on every PR
+[ Semantic layer ]        MetricFlow: 7 governed metrics defined once, mf query on DuckDB (Phase 6)
+[ BI-as-code ]            Evidence: 4-page static site over the same DuckDB warehouse (Phase 6)
 ```
 
 ### DWH layer (Phase 2b)
@@ -111,6 +115,28 @@ Kill-test verified: zeroing `total_ecl_amount` for Stage 1 fires the gate (min_s
 
 **Security CI.** A separate `security` GitHub Actions job runs on every PR: bandit (Python SAST, **0 issues**), pip-audit (dependency CVEs, **0 known vulnerabilities**), and gitleaks (full-history secret scan). `make security` runs bandit + pip-audit locally.
 
+### Semantic layer + BI-as-code (Phase 6)
+
+**MetricFlow semantic layer.** `models/semantic/` defines 5 semantic models over the dwh/marts and **7 governed metrics defined once**, so this dashboard, a future metrics API, and the downstream llm-analyst share one definition and never drift. Metrics are queried locally with `mf query` / validated with `mf validate-configs` — no hosted service.
+
+| Metric | Type | Backing model | Definition |
+|--------|------|---------------|------------|
+| `origination_volume` | simple | `fct_loan_origination` | SUM(principal_amount) |
+| `default_rate` | ratio | `fct_loan_lifecycle` | defaulted_loans / lifecycle_loans |
+| `delinquency_rate` | ratio | `fct_payment` | delinquent_loan_months / loan_months |
+| `portfolio_yield` | ratio | `fct_payment` | interest_charged / beginning_balance |
+| `avg_balance` | simple (avg) | `fct_payment` | AVG(ending_balance_amount) |
+| `cpr` | derived | `mart_risk_prepayment_speed` | 1 − (1 − smm)¹² |
+| `vintage_loss_curve` | ratio | `mart_risk_vintage_curve` | cumulative_defaults / cohort_exposure |
+
+Dimensions/entities: vintage (origination cohort quarter), product, credit_tier (score band), delinquency_status, months_on_book. `default_rate` (on the lifecycle model) groups by `credit_tier` (on the originations model) through the shared `loan` entity — the cross-model join a fixed mart table can't express. Geography is omitted: the synthetic facts carry no geography column.
+
+**Is MetricFlow supported on DuckDB?** Yes, for the open-source CLI — verified, not assumed. The dbt-docs FAQ lists the supported platforms (Snowflake/BigQuery/Databricks/Redshift/Postgres/Trino, no DuckDB), but that describes the **hosted dbt Cloud Semantic Layer API**. The open-source `mf` CLI ships `SupportedAdapterTypes.DUCKDB → SqlEngine.DUCKDB` with a `DuckDbSqlPlanRenderer`, and its own `mf tutorial` project uses a `type: duckdb` profile. `mf validate-configs` and `mf query` both run green against this warehouse. The hosted API tier becomes available only when the BigQuery target lands.
+
+**Anti-drift pins.** `tests/test_semantic_layer.py` pins two values from an independent direct-DuckDB derivation: `origination_volume = 430,503,900.00` (asserted to the cent via `mf query --csv`) and `default_rate = 0.055`. A change to a metric definition that moves a number fails CI. Kill-test verified: mutating `origination_principal` to `principal_amount + 1` fails the pin.
+
+**Evidence dashboard.** `bi/` is an Evidence (evidence.dev) BI-as-code project — SQL + markdown, version controlled — reading the dbt-built DuckDB warehouse and compiling to an 87 MB static site with `evidence build`. Four pages: **Portfolio Overview** (headline KPIs + origination by product/tier), **Vintage Curves** (cumulative loss + CPR by cohort/MOB), **Risk-Cohort Drill-Down** (default/prepayment gradient by credit tier), and **FinOps / Cost** (rows × columns "cells" cost proxy from `duckdb_tables()`, by layer and by model — swaps to `INFORMATION_SCHEMA.JOBS` when BigQuery lands). The Node build is `make evidence-build` (kept out of CI so CI stays network-free); the **query layer is gated in CI** via `tests/test_evidence_dashboard.py` — every source query executes against the warehouse and every page reference resolves.
+
 ## Results
 
 | Metric | Value |
@@ -126,7 +152,10 @@ Kill-test verified: zeroing `total_ecl_amount` for Stage 1 fires the gate (min_s
 | Full Dagster materialization | 464 dbt nodes PASS / 0 ERROR (dbt build via DbtCliResource + all gates) |
 | Elementary observability | 4 anomaly/schema monitors, 400 captured test results, 7.4 MB `edr report` HTML artifact |
 | Security scanners (every PR) | bandit 0 issues + pip-audit 0 known CVEs + gitleaks secret scan |
-| Total pytest tests | 403 (391 prior + 12 Phase 5: 3 unit + 4 kill asset-check tests + 4 Dagster definitions + 1 materialization integration) |
+| Total pytest tests | 425 (403 prior + 22 Phase 6: 12 semantic-layer + 10 Evidence query-layer) |
+| Governed metrics (semantic layer) | 7 (`default_rate`, `cpr`, `portfolio_yield`, `vintage_loss_curve`, `origination_volume`, `avg_balance`, `delinquency_rate`) over 5 semantic models |
+| MetricFlow on DuckDB | Supported (open-source `mf` CLI); `mf validate-configs` + `mf query` green; 2 metric values pinned + kill-tested |
+| Evidence dashboard | 4 pages / 6 source queries; `evidence build` → 87 MB static site; query layer gated in CI (no Node/network) |
 | Custom dbt singular invariant tests | 35 (9 DWH + 10 risk mart + 13 ECL + 3 staging) |
 | DWH models with enforced contracts | 9 of 9 |
 | Risk mart models with enforced contracts | 3 of 3 |
@@ -151,6 +180,7 @@ See [docs/adr/](docs/adr/) — each major decision documented with its trade-off
 - [ADR-0008](docs/adr/0008-orchestration-dagster-asset-centric.md) — asset-centric orchestration with Dagster + dagster-dbt (asset checks vs Makefile)
 - [ADR-0009](docs/adr/0009-observability-elementary.md) — data observability with Elementary (capture gating, anomaly monitors, edr report)
 - [ADR-0010](docs/adr/0010-security-ci-layer.md) — security CI layer (bandit + pip-audit + gitleaks)
+- [ADR-0011](docs/adr/0011-semantic-layer-and-evidence-dashboard.md) — semantic layer (MetricFlow on DuckDB) + Evidence dashboard + the BigQuery/Terraform deferral
 
 ## Quickstart
 
@@ -182,7 +212,16 @@ make elementary-report
 # Run the security scanners (bandit + pip-audit)
 make security
 
-# Run the full CI suite (ruff + sqlfluff + pytest + dbt builds + Dagster materialize)
+# Build the semantic-layer time spine, then validate + query metrics on DuckDB
+make dbt-build-semantic
+make semantic-validate
+make semantic-query
+
+# Build the Evidence BI-as-code dashboard into a static site (Node; not in CI)
+make evidence-install      # one-time npm install
+make evidence-build        # -> bi/build (open bi/build/index.html)
+
+# Run the full CI suite (ruff + sqlfluff + pytest + dbt builds + semantic validate + Dagster materialize)
 make ci
 ```
 

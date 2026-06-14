@@ -37,6 +37,15 @@ jobs:
       - run: uv run dbt build --select staging
         env:
           DBT_PROFILES_DIR: .
+      # Semantic layer: build the MetricFlow time spine + backing facts/marts,
+      # then validate the semantic manifest against the DuckDB warehouse. The
+      # metric pin tests already ran in pytest above; this is the manifest gate.
+      - run: make dbt-build-semantic
+        env:
+          DBT_PROFILES_DIR: .
+      - run: make semantic-validate
+        env:
+          DBT_PROFILES_DIR: .
       # Asset-materialization path: Dagster runs `dbt build` via DbtCliResource
       # (subprocess) and evaluates the @asset_check quality gates. An ERROR-
       # severity gate failure fails the run.
