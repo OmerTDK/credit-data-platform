@@ -1,0 +1,992 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: >
+      Calendar dimension covering 2020-01-01 through 2029-12-31. One row per
+      calendar day. date_key is an integer surrogate in YYYYMMDD format used as
+      the foreign key target in all DWH facts.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: date_key
+        description: Integer surrogate key in YYYYMMDD format (e.g. 20240115).
+        data_type: integer
+        data_tests:
+          - unique
+          - not_null
+      - name: full_date
+        description: Calendar date this row represents.
+        data_type: date
+        data_tests:
+          - unique
+          - not_null
+      - name: day_of_week
+        description: ISO day of week (1=Monday, 7=Sunday).
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: day_name
+        description: Full English day name (Monday, Tuesday, ...).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday]
+      - name: day_of_month
+        description: Day number within the month (1-31).
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: day_of_year
+        description: Day number within the year (1-366).
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: week_of_year
+        description: ISO week number (1-53).
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: month_number
+        description: Month number within the year (1-12).
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: month_name
+        description: Full English month name.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: quarter_number
+        description: Quarter number (1-4).
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: year_number
+        description: Calendar year (e.g. 2024).
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: is_weekend
+        description: True if Saturday or Sunday.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: fiscal_year
+        description: Fiscal year (aligned to calendar year in this platform).
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: fiscal_quarter
+        description: Fiscal quarter (aligned to calendar quarter in this platform).
+        data_type: integer
+        data_tests:
+          - not_null
+
+  - name: dim_product
+    description: >
+      Conformed product dimension. One row per credit product type: personal
+      loan, auto loan, mortgage, credit card. product_key is a stable MD5
+      surrogate derived from product_type.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: product_key
+        description: MD5 surrogate key derived from product_type.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: product_type
+        description: Credit product code.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [personal_loan, auto_loan, mortgage, credit_card]
+      - name: product_name
+        description: Human-readable product name.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: product_family
+        description: Broad product family (installment or revolving).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [installment, revolving]
+      - name: is_amortizing
+        description: True for installment products that amortize principal over a fixed term.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: is_revolving
+        description: True for revolving credit products.
+        data_type: boolean
+        data_tests:
+          - not_null
+
+  - name: dim_loan
+    description: >
+      Loan conformed dimension. One row per originated account; grain is loan_id.
+      Surrogate keys (loan_key, borrower_key, product_key) are stable MD5 hashes.
+      Joins to fct_loan_origination, fct_payment, and fct_loan_lifecycle on loan_key.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: loan_key
+        description: MD5 surrogate key derived from loan_id.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: borrower_key
+        description: MD5 surrogate key derived from borrower_id; entity-level FK to dim_borrower (constant across versions).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_borrower')
+                field: borrower_key
+      - name: product_key
+        description: MD5 surrogate key derived from product_type; FK to dim_product.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_key
+      - name: origination_date_key
+        description: YYYYMMDD integer FK to dim_date for the origination month.
+        data_type: integer
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: loan_id
+        description: Natural key of the loan.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: borrower_id
+        description: Natural key of the borrower.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_loanbook__borrower')
+                field: borrower_id
+      - name: product_type
+        description: Credit product of the account.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [personal_loan, auto_loan, mortgage, credit_card]
+      - name: origination_month
+        description: First day of the origination month.
+        data_type: date
+        data_tests:
+          - not_null
+      - name: principal_amount
+        description: Originated principal; null for credit cards.
+        data_type: decimal(12,2)
+      - name: term_months
+        description: Contractual term in months; null for credit cards.
+        data_type: integer
+      - name: interest_rate
+        description: Annual interest rate as a decimal.
+        data_type: double
+        data_tests:
+          - not_null
+      - name: monthly_payment_amount
+        description: Fixed monthly installment; null for credit cards.
+        data_type: decimal(12,2)
+      - name: credit_limit_amount
+        description: Credit limit; null for amortizing products.
+        data_type: decimal(12,2)
+      - name: score_band
+        description: Borrower credit score band at origination.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [subprime, near_prime, prime, prime_plus, super_prime]
+      - name: is_amortizing
+        description: True for installment products.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: is_revolving
+        description: True for revolving credit products.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: _loaded_at
+        description: Timestamp when this row was loaded into the DWH.
+        data_type: timestamptz
+        data_tests:
+          - not_null
+
+  - name: dim_borrower
+    description: >
+      SCD Type 2 borrower dimension. Static attributes (age_band, income_band,
+      region, score_band, credit_score) come from origination. The time-varying
+      attribute tracked as the SCD2 versioning key is current_delinquency_bucket,
+      derived from the worst delinquency bucket across the borrower's loans each
+      month. A new version row opens whenever this bucket changes. Grain of a
+      version row is (borrower_id, version_number). borrower_version_key is the
+      unique surrogate for each version; borrower_key is the entity-level
+      surrogate constant across versions.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: borrower_version_key
+        description: MD5 surrogate key of this specific SCD2 version row.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: borrower_key
+        description: Entity-level surrogate key; constant across versions.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: borrower_id
+        description: Natural key of the borrower.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: age_band
+        description: Age band at origination (static).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["18-24", "25-34", "35-44", "45-54", "55-64", "65+"]
+      - name: income_band
+        description: Annual income band at origination (static).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [under_25k, 25k_to_50k, 50k_to_75k, 75k_to_100k, over_100k]
+      - name: region
+        description: Borrower region at origination (static).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [northeast, midwest, south, west]
+      - name: score_band
+        description: Credit score band at origination (static).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [subprime, near_prime, prime, prime_plus, super_prime]
+      - name: credit_score
+        description: Credit score at origination (static, 300-850).
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: current_delinquency_bucket
+        description: >
+          The SCD2-tracked attribute: worst delinquency bucket across this
+          borrower's loans in the version window. Changes when the borrower
+          enters or cures delinquency.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [current, dpd_30, dpd_60, dpd_90_plus, default]
+      - name: version_number
+        description: Monotonically increasing version counter per borrower (1, 2, 3, ...).
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: _valid_from
+        description: First month this version was active (inclusive).
+        data_type: date
+        data_tests:
+          - not_null
+      - name: _valid_to
+        description: >
+          Exclusive upper bound: first month this version is no longer active; 9999-12-31 for current rows.
+          Correct point-in-time join: report_month >= _valid_from AND report_month < _valid_to.
+          Do not use BETWEEN (double-counts the boundary month shared between two versions).
+        data_type: date
+        data_tests:
+          - not_null
+      - name: _is_current
+        description: True for the currently active version of this borrower.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: _loaded_at
+        description: Timestamp when this row was loaded into the DWH.
+        data_type: timestamptz
+        data_tests:
+          - not_null
+
+  - name: dim_loan_current_state
+    description: >
+      Current delinquency and lifecycle state per loan, derived from the
+      fct_loan_state_event event stream (not a mutable status column). One row
+      per loan. This model demonstrates the event-sourcing pattern: current state
+      is a deterministic function of the immutable event stream, ensuring full
+      point-in-time auditability. Grain is loan_id.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: loan_key
+        description: MD5 surrogate key; FK to dim_loan.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_loan')
+                field: loan_key
+      - name: loan_id
+        description: Natural key of the loan.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: state_as_of_date_key
+        description: YYYYMMDD date key of the last event month.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: state_as_of_month
+        description: Calendar month of the latest known state.
+        data_type: date
+        data_tests:
+          - not_null
+      - name: months_on_book
+        description: >
+          Months on book at the time of the last recorded state-change event (from fct_loan_state_event).
+          For loans that have not changed state since origination this equals 1 (the origination event mob).
+          Use fct_loan_lifecycle.total_months_on_book for actual elapsed loan age.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: current_delinquency_bucket
+        description: Most recent delinquency bucket from the event stream.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [current, dpd_30, dpd_60, dpd_90_plus, default]
+      - name: current_loan_status
+        description: Most recent lifecycle status from the event stream.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [active, paid_off, defaulted, recovery_complete]
+      - name: is_terminal
+        description: True when the loan has reached a terminal lifecycle state.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: _loaded_at
+        description: Timestamp when this row was loaded into the DWH.
+        data_type: timestamptz
+        data_tests:
+          - not_null
+
+  - name: fct_loan_origination
+    description: >
+      Origination fact table. Grain is one row per originated loan. Records the
+      contractual terms as of origination: principal, term, rate, and product.
+      Use for origination volume, mix, and pricing analysis. All foreign keys
+      join to their respective dimension tables.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: loan_origination_key
+        description: Surrogate PK for this origination event; equal to loan_key.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: loan_key
+        description: MD5 surrogate FK to dim_loan.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_loan')
+                field: loan_key
+      - name: borrower_key
+        description: MD5 surrogate FK to dim_borrower (entity-level key, constant across versions).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_borrower')
+                field: borrower_key
+      - name: product_key
+        description: MD5 surrogate FK to dim_product.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_key
+      - name: origination_date_key
+        description: YYYYMMDD FK to dim_date for the origination month.
+        data_type: integer
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: loan_id
+        description: Natural key of the loan.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: borrower_id
+        description: Natural key of the borrower.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: product_type
+        description: Credit product of the account.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [personal_loan, auto_loan, mortgage, credit_card]
+      - name: origination_month
+        description: First day of the origination month.
+        data_type: date
+        data_tests:
+          - not_null
+      - name: principal_amount
+        description: Originated principal; null for credit cards.
+        data_type: decimal(12,2)
+      - name: term_months
+        description: Contractual term in months; null for credit cards.
+        data_type: integer
+      - name: interest_rate
+        description: Annual interest rate as a decimal.
+        data_type: double
+        data_tests:
+          - not_null
+      - name: monthly_payment_amount
+        description: Fixed monthly installment; null for credit cards.
+        data_type: decimal(12,2)
+      - name: credit_limit_amount
+        description: Credit limit; null for amortizing products.
+        data_type: decimal(12,2)
+      - name: score_band
+        description: Borrower credit score band at origination.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: _loaded_at
+        description: Timestamp when this row was loaded into the DWH.
+        data_type: timestamptz
+        data_tests:
+          - not_null
+
+  - name: fct_payment
+    description: >
+      Monthly payment fact table. Grain is one row per loan per month on book
+      (loan_id, months_on_book). Records all payment, balance, and delinquency
+      fields emitted by the generator state machine each month. The primary
+      analysis fact for payment behavior, delinquency roll rates, and loss
+      metrics.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: payment_key
+        description: Surrogate PK derived from (loan_id, months_on_book).
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: loan_key
+        description: MD5 surrogate FK to dim_loan.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_loan')
+                field: loan_key
+      - name: borrower_key
+        description: MD5 surrogate FK to dim_borrower (entity-level key, constant across versions).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_borrower')
+                field: borrower_key
+      - name: product_key
+        description: MD5 surrogate FK to dim_product.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_key
+      - name: payment_date_key
+        description: YYYYMMDD FK to dim_date for the reporting month.
+        data_type: integer
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: loan_id
+        description: Natural key of the loan.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: product_type
+        description: Credit product.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [personal_loan, auto_loan, mortgage, credit_card]
+      - name: months_on_book
+        description: 1-based loan age in months.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: report_month
+        description: First day of the calendar month.
+        data_type: date
+        data_tests:
+          - not_null
+      - name: beginning_balance_amount
+        description: Outstanding balance at the start of the month.
+        data_type: decimal(12,2)
+        data_tests:
+          - not_null
+      - name: draw_amount
+        description: New spending drawn on the account this month.
+        data_type: decimal(12,2)
+        data_tests:
+          - not_null
+      - name: scheduled_payment_amount
+        description: Amount contractually due this month.
+        data_type: decimal(12,2)
+        data_tests:
+          - not_null
+      - name: actual_payment_amount
+        description: Amount actually paid this month.
+        data_type: decimal(12,2)
+        data_tests:
+          - not_null
+      - name: principal_paid_amount
+        description: Principal portion of the actual payment.
+        data_type: decimal(12,2)
+        data_tests:
+          - not_null
+      - name: interest_paid_amount
+        description: Interest portion of the actual payment.
+        data_type: decimal(12,2)
+        data_tests:
+          - not_null
+      - name: interest_charged_amount
+        description: Interest accrued this month.
+        data_type: decimal(12,2)
+        data_tests:
+          - not_null
+      - name: ending_balance_amount
+        description: Outstanding balance at the end of the month.
+        data_type: decimal(12,2)
+        data_tests:
+          - not_null
+      - name: principal_writeoff_amount
+        description: Principal written off this month; non-zero only on default.
+        data_type: decimal(12,2)
+        data_tests:
+          - not_null
+      - name: recovery_amount
+        description: Post-default recovery received this month.
+        data_type: decimal(12,2)
+        data_tests:
+          - not_null
+      - name: utilization_rate
+        description: Ending balance over credit limit; set for credit cards only.
+        data_type: double
+      - name: delinquency_bucket
+        description: Delinquency bucket as of this month.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [current, dpd_30, dpd_60, dpd_90_plus, default]
+      - name: loan_status
+        description: Lifecycle status of the loan as of this month.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [active, paid_off, defaulted, recovery_complete]
+      - name: is_prepayment
+        description: True when the loan terminated by voluntary prepayment this month.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: is_paid_in_full
+        description: True when the actual payment met or exceeded the scheduled amount.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: is_missed_payment
+        description: True when no payment was made this month.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: _loaded_at
+        description: Timestamp when this row was loaded into the DWH.
+        data_type: timestamptz
+        data_tests:
+          - not_null
+
+  - name: fct_loan_state_event
+    description: >
+      Immutable event stream of loan state transitions. One row per state-change
+      event, derived from the monthly performance stream by detecting changes in
+      delinquency_bucket or loan_status. Three event types: origination (first
+      row per loan), delinquency_transition (bucket changes), and
+      lifecycle_transition (status reaches paid_off, defaulted, or
+      recovery_complete). This is the source of truth for current state:
+      dim_loan_current_state is derived from this table, not from a mutable
+      status column. Grain is (loan_id, months_on_book, event_type).
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: state_event_key
+        description: Surrogate PK derived from (loan_id, months_on_book, event_type).
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: loan_key
+        description: MD5 surrogate FK to dim_loan.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_loan')
+                field: loan_key
+      - name: borrower_key
+        description: MD5 surrogate FK to dim_borrower (entity-level key, constant across versions).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_borrower')
+                field: borrower_key
+      - name: product_key
+        description: MD5 surrogate FK to dim_product.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_key
+      - name: event_date_key
+        description: YYYYMMDD FK to dim_date for the event month.
+        data_type: integer
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: loan_id
+        description: Natural key of the loan.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: product_type
+        description: Credit product of the loan.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: months_on_book
+        description: Month on book when this event occurred.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: report_month
+        description: Calendar month the event was recorded in.
+        data_type: date
+        data_tests:
+          - not_null
+      - name: event_type
+        description: Category of state change (origination, delinquency_transition, lifecycle_transition).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [origination, delinquency_transition, lifecycle_transition]
+      - name: from_delinquency_bucket
+        description: Delinquency bucket before the transition; null for origination events.
+        data_type: varchar
+      - name: to_delinquency_bucket
+        description: Delinquency bucket after the transition.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [current, dpd_30, dpd_60, dpd_90_plus, default]
+      - name: from_loan_status
+        description: Loan status before the transition; null for origination events.
+        data_type: varchar
+      - name: to_loan_status
+        description: Loan status after the transition.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [active, paid_off, defaulted, recovery_complete]
+      - name: _loaded_at
+        description: Timestamp when this row was loaded into the DWH.
+        data_type: timestamptz
+        data_tests:
+          - not_null
+
+  - name: fct_loan_lifecycle
+    description: >
+      Accumulating snapshot fact table. One row per loan; milestone date columns
+      fill in progressively as the loan passes through lifecycle stages.
+      Milestones: origination, first payment, first 30/60/90-day delinquency,
+      default, payoff, prepayment, recovery completion. Null milestone columns
+      indicate the loan has not yet reached that stage. Grain is loan_id.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: loan_lifecycle_key
+        description: Surrogate PK; equal to loan_key.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: loan_key
+        description: MD5 surrogate FK to dim_loan.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_loan')
+                field: loan_key
+      - name: borrower_key
+        description: MD5 surrogate FK to dim_borrower (entity-level key, constant across versions).
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_borrower')
+                field: borrower_key
+      - name: product_key
+        description: MD5 surrogate FK to dim_product.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_key
+      - name: origination_date_key
+        description: YYYYMMDD FK to dim_date for origination month.
+        data_type: integer
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: first_payment_date_key
+        description: YYYYMMDD FK to dim_date for first payment month.
+        data_type: integer
+      - name: first_dpd30_date_key
+        description: YYYYMMDD FK to dim_date when loan first entered 30+ dpd.
+        data_type: integer
+      - name: first_dpd60_date_key
+        description: YYYYMMDD FK to dim_date when loan first entered 60+ dpd.
+        data_type: integer
+      - name: first_dpd90_date_key
+        description: YYYYMMDD FK to dim_date when loan first entered 90+ dpd.
+        data_type: integer
+      - name: default_date_key
+        description: YYYYMMDD FK to dim_date when loan defaulted; null if not defaulted.
+        data_type: integer
+      - name: payoff_date_key
+        description: YYYYMMDD FK to dim_date when loan paid off; null if not paid off.
+        data_type: integer
+      - name: prepayment_date_key
+        description: YYYYMMDD FK to dim_date when loan prepaid; null if not prepaid.
+        data_type: integer
+      - name: recovery_complete_date_key
+        description: YYYYMMDD FK to dim_date when recovery completed; null if not in recovery.
+        data_type: integer
+      - name: loan_id
+        description: Natural key of the loan.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: borrower_id
+        description: Natural key of the borrower.
+        data_type: varchar
+        data_tests:
+          - not_null
+      - name: product_type
+        description: Credit product of the loan.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [personal_loan, auto_loan, mortgage, credit_card]
+      - name: origination_month
+        description: First day of the origination month.
+        data_type: date
+        data_tests:
+          - not_null
+      - name: principal_amount
+        description: Originated principal; null for credit cards.
+        data_type: decimal(12,2)
+      - name: term_months
+        description: Contractual term in months; null for credit cards.
+        data_type: integer
+      - name: first_payment_month
+        description: First month a payment was recorded.
+        data_type: date
+      - name: first_dpd30_month
+        description: First month the loan entered 30+ dpd; null if never delinquent.
+        data_type: date
+      - name: first_dpd60_month
+        description: First month the loan entered 60+ dpd; null if never 60+ dpd.
+        data_type: date
+      - name: first_dpd90_month
+        description: First month the loan entered 90+ dpd; null if never 90+ dpd.
+        data_type: date
+      - name: default_month
+        description: Month the loan defaulted; null if not defaulted.
+        data_type: date
+      - name: payoff_month
+        description: Month the loan paid off; null if not paid off.
+        data_type: date
+      - name: prepayment_month
+        description: Month the loan prepaid voluntarily; null if not prepaid.
+        data_type: date
+      - name: recovery_complete_month
+        description: Month recovery completed; null if not in recovery.
+        data_type: date
+      - name: last_report_month
+        description: Most recent month this loan has performance data for.
+        data_type: date
+        data_tests:
+          - not_null
+      - name: total_months_on_book
+        description: Total months of performance data recorded for this loan.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: final_status
+        description: Lifecycle status as of the most recent performance row.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [active, paid_off, defaulted, recovery_complete]
+      - name: final_balance_amount
+        description: Ending balance as of the most recent performance row.
+        data_type: decimal(12,2)
+        data_tests:
+          - not_null
+      - name: is_terminal
+        description: True when the loan's final status is a terminal state.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: has_defaulted
+        description: True if this loan has ever defaulted.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: has_paid_off
+        description: True if this loan has paid off.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: has_prepaid
+        description: True if this loan prepaid voluntarily.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: has_been_delinquent
+        description: True if this loan was ever 30+ days past due.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: _loaded_at
+        description: Timestamp when this row was loaded into the DWH.
+        data_type: timestamptz
+        data_tests:
+          - not_null
