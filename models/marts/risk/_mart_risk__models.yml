@@ -161,7 +161,11 @@ models:
         data_tests:
           - not_null
       - name: cohort_principal
-        description: Sum of principal_amount at origination for balance-weighted extensions.
+        description: >
+          Sum of origination principal (amortizing products) or credit limit (credit cards) per
+          cohort — COALESCE(principal_amount, 0) + COALESCE(credit_limit_amount, 0). For
+          amortizing products credit_limit_amount is NULL so this equals principal_amount; for
+          credit cards principal_amount is NULL so this equals credit_limit_amount.
         data_type: decimal(18, 2)
         data_tests:
           - not_null

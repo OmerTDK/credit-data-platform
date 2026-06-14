@@ -1,6 +1,6 @@
 -- Mart-prep intermediate. Reads DWH facts/dimensions to build risk-specific
--- projection for downstream mart_risk_vintage_curve and mart_risk_prepayment_speed marts.
--- Single cohort x months-on-book spine shared by both output marts.
+-- projection for downstream mart_risk_prepayment_speed mart.
+-- Per-loan-per-MOB spine with payment attributes and unscheduled principal.
 
 {{ config(materialized='view') }}
 
@@ -41,14 +41,6 @@ payment_months as (
             0
         ) * cast(fct_payment.is_prepayment as integer) as unscheduled_principal
     from {{ ref('fct_payment') }} as fct_payment
-),
-
-milestones as (
-    select
-        fct_loan_lifecycle.loan_id,
-        fct_loan_lifecycle.default_month,
-        fct_loan_lifecycle.prepayment_month
-    from {{ ref('fct_loan_lifecycle') }} as fct_loan_lifecycle
 )
 
 select
@@ -66,13 +58,7 @@ select
     payment_months.actual_payment_amount,
     payment_months.is_prepayment,
     payment_months.loan_status,
-    payment_months.unscheduled_principal,
-    milestones.default_month is not null
-    and milestones.default_month <= payment_months.report_month as has_defaulted_by_mob,
-    milestones.prepayment_month is not null
-    and milestones.prepayment_month <= payment_months.report_month as has_prepaid_by_mob
+    payment_months.unscheduled_principal
 from originations
 inner join payment_months
     on originations.loan_id = payment_months.loan_id
-left join milestones
-    on originations.loan_id = milestones.loan_id

@@ -9,10 +9,6 @@ with constants as (
         {{ var('roll_rate_period_months', 1) }} as months_per_period
 ),
 
--- One row per (loan, month): the bucket the loan WAS IN at the START of each month.
--- Derived by shifting fct_payment.delinquency_bucket one period forward:
--- the bucket at the start of month M is the bucket at the END of month M-1.
--- This is the correct denominator for roll-rate matrices.
 loan_period_starts as (
     select
         fct_payment.loan_id,
@@ -32,8 +28,6 @@ loan_period_starts as (
     where fct_payment.loan_status = 'active'
 ),
 
--- Transition events map to the observation_period using the event's report_month.
--- event.from_delinquency_bucket = state at start of period, to_delinquency_bucket = end.
 transition_events as (
     select
         fct_loan_state_event.loan_id,
@@ -51,8 +45,6 @@ transition_events as (
     where fct_loan_state_event.event_type = 'delinquency_transition'
 ),
 
--- At-risk denominator: loans that were in each bucket at the START of the observation_period.
--- These are exactly the loans in loan_period_starts that have a matching next period.
 at_risk_denominator as (
     select
         loan_period_starts.product_type,
@@ -62,7 +54,6 @@ at_risk_denominator as (
         count(distinct loan_period_starts.loan_id) as at_risk_count,
         sum(loan_period_starts.beginning_balance_amount) as beginning_balance_sum
     from loan_period_starts
-    -- Only include loans that actually had an observation period row in fct_payment
     inner join {{ ref('fct_payment') }} as subsequent_payment
         on
             loan_period_starts.loan_id = subsequent_payment.loan_id
@@ -74,8 +65,6 @@ at_risk_denominator as (
         loan_period_starts.from_bucket
 ),
 
--- Non-self transitions: actual state-change events joined back to the at-risk pool
--- to get the beginning_balance for transition loans.
 non_self_transitions as (
     select
         transition_events.product_type,
@@ -115,8 +104,6 @@ non_self_aggregated as (
         non_self_transitions.from_bucket
 ),
 
--- Self-transition residual: loans that stayed in the same bucket.
--- Self-transition count = at_risk_count - total non-self transitions from this bucket.
 self_transitions as (
     select
         at_risk_denominator.product_type,

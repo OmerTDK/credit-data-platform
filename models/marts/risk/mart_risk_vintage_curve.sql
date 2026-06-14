@@ -3,26 +3,23 @@
     contract={'enforced': true}
 ) }}
 
--- Grain: (origination_cohort_quarter, product_type, score_band, months_on_book).
--- Cumulative counts span the FULL original cohort at each MOB, including loans that
--- have exited fct_payment after a terminal event. Computed via cross-join of
--- (cohort x loan x MOB range) rather than the payment spine, so no loans drop out.
-
 with originations as (
     select
         fct_loan_origination.loan_id,
         fct_loan_origination.product_type,
         fct_loan_origination.score_band,
         fct_loan_origination.origination_month,
-        -- Credit cards use credit_limit_amount; amortizing use principal_amount
-        cast(date_trunc(
-            'quarter',
-            fct_loan_origination.origination_month
-        ) as date) as origination_cohort_quarter,
+        cast(
+            case
+                when '{{ var("vintage_cohort_granularity", "quarter") }}' = 'month'
+                    then date_trunc('month', fct_loan_origination.origination_month)
+                else date_trunc('quarter', fct_loan_origination.origination_month)
+            end
+            as date
+        ) as origination_cohort_quarter,
         fct_loan_lifecycle.total_months_on_book,
         coalesce(fct_loan_origination.principal_amount, 0)
         + coalesce(fct_loan_origination.credit_limit_amount, 0) as cohort_principal_amount,
-        -- Convert milestone dates to MOBs (months since origination_month)
         case
             when fct_loan_lifecycle.default_month is not null
                 then datediff(
@@ -59,12 +56,10 @@ cohort_sizes as (
         originations.score_band
 ),
 
--- All possible MOB values up to the maximum observed across any cohort.
 mob_numbers as (
     select unnest(range(1, 100)) as months_on_book
 ),
 
--- Explicit MOB spine: all MOBs from 1 to the max observed for each cohort.
 mob_spine as (
     select
         cohort_sizes.origination_cohort_quarter,
@@ -76,8 +71,6 @@ mob_spine as (
     where mob_numbers.months_on_book <= cohort_sizes.max_mob
 ),
 
--- For each loan x MOB: has it defaulted/prepaid by this MOB?
--- No correlated subqueries: mob comparisons use pre-computed default_mob / prepayment_mob.
 loan_milestone_flags as (
     select
         mob_spine.origination_cohort_quarter,

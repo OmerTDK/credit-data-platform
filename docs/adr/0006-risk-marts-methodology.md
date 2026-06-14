@@ -117,22 +117,23 @@ is self-documenting — credit_card never appears, making the exclusion verifiab
 **NULL semantics:** `smm_rate` and `cpr_rate` are NULL when `performing_pool_balance = 0`.
 The `assert_mart_risk_smm_in_unit_interval` test is limited to non-NULL rows.
 
-### 4. Shared intermediate spine for vintage + prepayment
+### 4. Intermediate spine used by prepayment speed only
 
-Both `mart_risk_vintage_curve` and `mart_risk_prepayment_speed` share
-`int_risk_vintage_cohort_spine` — a per-loan-per-MOB view that carries milestone flags
-(`has_defaulted_by_mob`, `has_prepaid_by_mob`) and payment attributes (`beginning_balance_amount`,
-`unscheduled_principal`, `is_prepayment`, `loan_status`).
+`int_risk_vintage_cohort_spine` is a per-loan-per-MOB view that carries payment attributes
+(`beginning_balance_amount`, `unscheduled_principal`, `is_prepayment`, `loan_status`). It is
+used exclusively by `mart_risk_prepayment_speed`, where we want the payment rows as-observed
+(including exit: a prepaid loan's `is_prepayment = TRUE` in its final month is precisely what
+the SMM numerator needs).
 
-The vintage curve does NOT use this spine for cumulative counts (see §2 above — it would lose
-exited loans). The spine is used by `mart_risk_prepayment_speed`, where we want the payment rows
-as-observed (including exit: a prepaid loan's `is_prepayment = TRUE` in its final month is
-precisely what the SMM numerator needs).
+`mart_risk_vintage_curve` does NOT use this spine — it reads `fct_loan_origination` and
+`fct_loan_lifecycle` directly for its cumulative-count computation via an explicit
+(loan × MOB range) cross-join (see §2 above). Using the payment spine for the vintage curve
+would drop exited loans from cumulative counts.
 
-**Why not one CTE inside each mart:** The spine joins four DWH tables (`fct_loan_origination`,
-`dim_loan`, `fct_payment`, `fct_loan_lifecycle`) and computes `unscheduled_principal`. At 255K
-rows, computing this twice in separate mart CTEs wastes a full scan. One shared view avoids the
-duplication without adding a new abstraction level.
+**Why not one CTE inside each mart:** The spine joins three DWH tables (`fct_loan_origination`,
+`dim_loan`, `fct_payment`) and computes `unscheduled_principal`. Embedding this in the mart CTE
+would exceed the 80-line CTE limit from `engineering-principles.md` §2. Extracting it to the
+intermediate layer keeps the mart readable without adding a new abstraction level.
 
 ### 5. Contract enforcement on all three mart models
 
@@ -157,15 +158,19 @@ The three mart models and two intermediates are designed for extraction into the
 
 - `int_risk_roll_rate_observations.sql` and `int_risk_vintage_cohort_spine.sql` become source
   adapters: `ref()` calls replaced with `source()` pointing at the consumer's DWH tables.
-- All three mart models are portable as-is — they only reference the two intermediates.
+- `mart_risk_roll_rate_matrix` and `mart_risk_prepayment_speed` reference only the two
+  intermediates and are portable as-is.
+- `mart_risk_vintage_curve` references `fct_loan_origination` and `fct_loan_lifecycle` from the
+  DWH directly (via its own originations CTE). Extracting it to the OSS package requires two
+  additional source adapters for those two DWH tables.
 - Custom singular tests become the package's integration test suite.
 - `roll_rate_period_months` and `vintage_cohort_granularity` dbt vars map directly to documented
   macro arguments.
 - Accepted_values for bucket labels and product types become the package's documented input
   contract; callers with different bucket names pass a column-mapping argument.
 
-Estimated extraction effort: two source-config files, one `packages.yml` entry, zero mart SQL
-changes.
+Estimated extraction effort: four source-config files (two intermediates + two vintage-curve DWH
+refs), one `packages.yml` entry, zero mart SQL changes beyond the source adapter swap.
 
 ## Alternatives considered
 
@@ -209,8 +214,8 @@ columns are exposed in the mart for cross-verification.
   ~O(loans × max_MOB) rows before aggregation. At 12,000 loans × 35 MOBs = ~420K rows in the
   intermediate, aggregated to 3,920 mart rows. This is fast at synthetic scale but requires
   partitioning at 1M+ loan production scale.
-- `int_risk_vintage_cohort_spine` is shared by both vintage and prepayment marts, so changes
-  to the spine's grain or column names will require coordinated updates to both downstream marts.
+- `int_risk_vintage_cohort_spine` feeds `mart_risk_prepayment_speed` only. Changes to the
+  spine's grain or column names require updates to the prepayment speed mart.
   The spine's grain and contract are documented in `_intermediate_risk__models.yml`.
 - The OSS extraction is straightforward (see §6) because the three marts only ref the two
   intermediates. No mart references DWH directly.

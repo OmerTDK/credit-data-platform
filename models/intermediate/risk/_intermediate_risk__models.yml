@@ -59,13 +59,13 @@ models:
 
   - name: int_risk_vintage_cohort_spine
     description: >
-      Mart-prep intermediate. Single cohort x months-on-book spine shared by
-      mart_risk_vintage_curve and mart_risk_prepayment_speed. One row per
-      (loan_id, origination_cohort_quarter, months_on_book). Cohort granularity
+      Mart-prep intermediate. Per-loan-per-MOB spine feeding mart_risk_prepayment_speed.
+      One row per (loan_id, origination_cohort_quarter, months_on_book). Cohort granularity
       controlled by var vintage_cohort_granularity (default quarter; month also valid).
-      Carries has_defaulted_by_mob and has_prepaid_by_mob milestone flags derived from
-      fct_loan_lifecycle. Computes unscheduled_principal = GREATEST(actual - scheduled, 0)
-      when is_prepayment, else 0 — handles partial prepayments correctly.
+      Computes unscheduled_principal = GREATEST(actual - scheduled, 0) when is_prepayment,
+      else 0 — handles partial prepayments correctly. mart_risk_vintage_curve computes its
+      cumulative counts directly from fct_loan_origination and fct_loan_lifecycle via an
+      explicit cohort x MOB cross-join (see ADR-0006 §2 and §4).
     columns:
       - name: loan_id
         description: Natural key of the loan.
@@ -91,14 +91,6 @@ models:
           - not_null
       - name: months_on_book
         description: Month number within the loan's life (1 = origination month).
-        data_tests:
-          - not_null
-      - name: has_defaulted_by_mob
-        description: True if the loan had defaulted on or before this months_on_book.
-        data_tests:
-          - not_null
-      - name: has_prepaid_by_mob
-        description: True if the loan had prepaid on or before this months_on_book.
         data_tests:
           - not_null
       - name: unscheduled_principal

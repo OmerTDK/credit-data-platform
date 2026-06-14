@@ -277,6 +277,72 @@ def test_prepayment_speed_cpr_null_iff_smm_null(
     )
 
 
+def test_prepayment_speed_cpr_in_unit_interval(
+    risk_mart_build: subprocess.CompletedProcess[str],
+) -> None:
+    assert risk_mart_build.returncode == 0, risk_mart_build.stdout
+    with duckdb.connect(str(DUCKDB_FILE), read_only=True) as connection:
+        violations = connection.execute(
+            "SELECT COUNT(*) FROM mart_risk.mart_risk_prepayment_speed"
+            " WHERE cpr_rate IS NOT NULL AND (cpr_rate < 0 OR cpr_rate > 1)"
+        ).fetchone()[0]
+    assert violations == 0, f"Found {violations} rows with cpr_rate outside [0, 1]"
+
+
+def test_prepayment_speed_cpr_formula(
+    risk_mart_build: subprocess.CompletedProcess[str],
+) -> None:
+    """cpr_rate must equal 1 - (1 - smm_rate)^12 within rounding tolerance."""
+    assert risk_mart_build.returncode == 0, risk_mart_build.stdout
+    with duckdb.connect(str(DUCKDB_FILE), read_only=True) as connection:
+        violations = connection.execute(
+            "SELECT COUNT(*) FROM mart_risk.mart_risk_prepayment_speed"
+            " WHERE smm_rate IS NOT NULL AND smm_rate > 0.001"
+            "   AND ABS(CAST(cpr_rate AS DOUBLE)"
+            "       - (1.0 - POWER(1.0 - CAST(smm_rate AS DOUBLE), 12))) > 0.00001"
+        ).fetchone()[0]
+    assert violations == 0, (
+        f"Found {violations} rows where cpr_rate deviates from 1-(1-SMM)^12 by more than 0.00001"
+    )
+
+
+def test_vintage_curve_cumulative_prepayments_monotonic(
+    risk_mart_build: subprocess.CompletedProcess[str],
+) -> None:
+    """Cumulative prepayment count must be non-decreasing within each cohort/product/score_band."""
+    assert risk_mart_build.returncode == 0, risk_mart_build.stdout
+    with duckdb.connect(str(DUCKDB_FILE), read_only=True) as connection:
+        violations = connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "  SELECT origination_cohort_quarter, product_type, score_band,"
+            "         months_on_book, cumulative_prepayment_count,"
+            "         LAG(cumulative_prepayment_count) OVER ("
+            "             PARTITION BY origination_cohort_quarter, product_type, score_band"
+            "             ORDER BY months_on_book"
+            "         ) AS prev_count"
+            "  FROM mart_risk.mart_risk_vintage_curve"
+            ") sub"
+            " WHERE prev_count IS NOT NULL AND cumulative_prepayment_count < prev_count"
+        ).fetchone()[0]
+    assert violations == 0, f"Cumulative prepayment monotonicity violated in {violations} rows"
+
+
+def test_vintage_curve_derived_counts_non_negative(
+    risk_mart_build: subprocess.CompletedProcess[str],
+) -> None:
+    """surviving_non_defaulted_count and loans_at_risk_count must never be negative."""
+    assert risk_mart_build.returncode == 0, risk_mart_build.stdout
+    with duckdb.connect(str(DUCKDB_FILE), read_only=True) as connection:
+        violations = connection.execute(
+            "SELECT COUNT(*) FROM mart_risk.mart_risk_vintage_curve"
+            " WHERE surviving_non_defaulted_count < 0 OR loans_at_risk_count < 0"
+        ).fetchone()[0]
+    assert violations == 0, (
+        f"Found {violations} rows with negative surviving_non_defaulted_count "
+        f"or loans_at_risk_count"
+    )
+
+
 def test_prepayment_speed_key_unique(
     risk_mart_build: subprocess.CompletedProcess[str],
 ) -> None:

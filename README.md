@@ -2,9 +2,9 @@
 
 Multi-product consumer-credit data platform: calibrated synthetic loan book, dimensional + event-sourced dbt warehouse, IFRS 9 ECL, semantic layer, observability
 
-> Status: under construction — not yet at definition-of-done.
+> Status: Phases 0–3 complete. Phase 4 (IFRS 9 ECL) in progress.
 
-**Phase 3 done:** risk analytics marts — roll-rate matrix, vintage curves, prepayment speed — 5 new dbt models (3 mart tables + 2 mart-prep intermediate views), 73 new dbt data tests (3 enforced contracts, 6 custom invariant singular tests), 17 new pytest integration tests, 3,633 roll-rate rows / 3,920 vintage-curve rows / 588 prepayment-speed rows — full CI green in ~32 s — see [ADR-0006](docs/adr/0006-risk-marts-methodology.md).
+**Phase 3 done:** risk analytics marts — roll-rate matrix, vintage curves, prepayment speed — 5 new dbt models (3 mart tables + 2 mart-prep intermediate views), 75 new dbt data tests (3 enforced contracts, 10 custom invariant singular tests), 21 new pytest integration tests, 3,633 roll-rate rows / 3,920 vintage-curve rows / 588 prepayment-speed rows — full CI green in ~32 s — see [ADR-0006](docs/adr/0006-risk-marts-methodology.md).
 
 **Phase 2b done:** dimensional + event-sourced DWH layer — 9 models across `dwh` schema (3 conformed dims, 1 SCD2 borrower dim, 1 event-sourced current-state dim, 2 facts, 1 accumulating-snapshot lifecycle fact, 1 immutable state-event stream), dbt contracts on all 9 models, 191 DWH data tests (relationships including borrower_key FK on all 5 fact/dim models, accepted_values with not_null, 9 custom invariant tests), 17 new pytest fixtures asserting row counts and data invariants, full CI green in ~32 s end-to-end — see [ADR-0005](docs/adr/0005-dimensional-layer-and-event-sourced-loan-state.md).
 
@@ -72,7 +72,7 @@ Two mart-prep intermediates live in `models/intermediate/risk/`:
 - `int_risk_roll_rate_observations` — shifted-denominator roll-rate observations; reads `fct_payment`, `fct_loan_state_event`, `dim_loan`
 - `int_risk_vintage_cohort_spine` — per-loan-per-MOB view with milestone flags and unscheduled principal; shared by vintage curve and prepayment speed
 
-Six custom singular tests cover invariants no generic test can express: probabilities sum to 1.0, no negative self-transitions, monotonic cumulative defaults, rates in [0,1]. Kill-test verified: injecting +1 to `transition_loan_count` in the roll-rate mart fires 1,762 violations.
+Ten custom singular tests cover invariants no generic test can express: probabilities sum to 1.0, no negative self-transitions, monotonic cumulative defaults and prepayments, rates in [0,1], CPR formula correctness (1-(1-SMM)^12), non-negative derived counts. Kill-test verified: injecting +1 to `transition_loan_count` fires 1,762 violations; exponent mutant (12→1) fires 454 CPR formula violations.
 
 ## Results
 
@@ -81,12 +81,12 @@ Six custom singular tests cover invariants no generic test can express: probabil
 | Loan book generation | 12,000 loans / 255,131 performance rows in ~2.3 s |
 | Staging build | 3 views + 46 data tests in ~0.4 s |
 | DWH build (staging + intermediate + DWH) | 9 tables + 7 views + 258 data tests in ~2.4 s |
-| Risk mart build (intermediates + 3 mart tables) | 73 data tests in ~0.8 s |
-| Full build (all 21 models) | 331 data tests in ~2.1 s |
+| Risk mart build (intermediates + 3 mart tables) | 75 data tests in ~0.8 s |
+| Full build (all 21 models) | 333 data tests in ~2.1 s |
 | Full CI (ruff + sqlfluff + generate + pytest + dbt-parse + dbt-build) | ~32 s end-to-end |
-| Total dbt data tests | 331 (46 staging + 30 intermediate + 191 DWH + 64 mart-schema + 6 mart-custom + 4 intermediate-custom) |
-| Total pytest tests | 359 (325 generator + 3 staging integration + 14 DWH integration + 17 risk-mart integration) |
-| Custom dbt singular invariant tests | 15 (9 DWH + 6 risk mart: roll-rate probabilities sum-to-one, no negative self-transition, monotonic vintage defaults, prepayment rate in [0,1], SMM in [0,1], no null from_bucket) |
+| Total dbt data tests | 333 (43 staging + 40 intermediate + 182 DWH + 47 mart-schema + 22 singular) |
+| Total pytest tests | 363 (321 generator + 3 staging integration + 17 DWH integration + 21 risk-mart integration + 1 dbt project) |
+| Custom dbt singular invariant tests | 22 (9 DWH + 10 risk mart: roll-rate probabilities sum-to-one, no negative self-transition, monotonic vintage defaults, monotonic vintage prepayments, prepayment rate in [0,1], SMM in [0,1], CPR in [0,1], CPR formula, no null from_bucket, derived counts non-negative; + 3 staging) |
 | DWH models with enforced contracts | 9 of 9 |
 | Risk mart models with enforced contracts | 3 of 3 |
 | roll_rate_matrix rows | 3,633 (product × score_band × period × from_bucket × to_bucket transitions) |

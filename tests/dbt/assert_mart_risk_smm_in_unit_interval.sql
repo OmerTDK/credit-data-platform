@@ -7,8 +7,17 @@ select
     mart_risk_prepayment_speed.cpr_rate
 from {{ ref('mart_risk_prepayment_speed') }} as mart_risk_prepayment_speed
 where
-    mart_risk_prepayment_speed.smm_rate is not null
-    and (
-        mart_risk_prepayment_speed.smm_rate < 0
-        or mart_risk_prepayment_speed.smm_rate > 1
+    (
+        mart_risk_prepayment_speed.smm_rate is not null
+        and (
+            mart_risk_prepayment_speed.smm_rate < 0
+            or mart_risk_prepayment_speed.smm_rate > 1
+        )
+    )
+    or (
+        mart_risk_prepayment_speed.cpr_rate is not null
+        and (
+            mart_risk_prepayment_speed.cpr_rate < 0
+            or mart_risk_prepayment_speed.cpr_rate > 1
+        )
     )
