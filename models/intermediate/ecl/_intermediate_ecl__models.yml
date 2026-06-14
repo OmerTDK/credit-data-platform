@@ -4,10 +4,13 @@ models:
   - name: int_ecl_pd_term_structure
     description: >
       Mart-prep intermediate. PD term structure per (product_type, score_band,
-      starting_bucket). 12-month PD derived from roll-rate matrix
-      transition_balance_rate using stationary Markov closed-form
-      1-(1-p_step)^12. Lifetime PD from vintage curve cohort-averaged terminal
-      CDR with LAST_VALUE fallback for censored rows.
+      starting_bucket). The roll-rate matrix supplies count-based one-step
+      transition probabilities; a recursive Markov chain (default absorbing)
+      propagates the bucket distribution to derive the 12-month PD (12 steps)
+      and a Markov lifetime PD (120 steps). Lifetime PD is the worst-case of the
+      Markov lifetime PD, the vintage-curve cohort-averaged terminal CDR, and
+      the 12-month PD floor. Segments with no observed delinquency transitions
+      produce no rows (the joining loans carry PD 0 via COALESCE downstream).
     columns:
       - name: product_type
         description: Credit product type.

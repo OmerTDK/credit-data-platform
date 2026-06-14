@@ -84,7 +84,11 @@ loan_staging as (
         lifecycle.total_months_on_book,
         constants.sicr_pd_delta_threshold,
         constants.sicr_pd_multiple,
-        origination_pd.origination_pd_rate,
+        -- Segments with no observed delinquency transitions have no PD row, so
+        -- origination PD is unknown. Treat unknown as 0.0: the relative-PD SICR
+        -- trigger is guarded by origination_pd_rate > 0.0 and so stays inert,
+        -- and the DPD backstop still drives staging for those loans.
+        coalesce(origination_pd.origination_pd_rate, 0.0) as origination_pd_rate,
         coalesce(pd_term_structure.pd_12m, 0.0) as current_pd_12m,
         coalesce(pd_term_structure.pd_lifetime, 0.0) as current_lifetime_pd,
         watchlist.loan_id is not null as is_on_watchlist
