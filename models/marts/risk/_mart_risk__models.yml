@@ -1,0 +1,285 @@
+version: 2
+
+models:
+  - name: mart_risk_roll_rate_matrix
+    description: >
+      Delinquency state-transition probability matrix. One row per
+      (product_type, score_band, observation_period, from_bucket, to_bucket).
+      Denominator is the stock at-risk count: all loans that were active in
+      from_bucket at the start of the observation period, whether or not they
+      transitioned. Self-transitions (from_bucket = to_bucket) are included as
+      the arithmetic residual (at_risk_count minus all non-self transitions)
+      because fct_loan_state_event only emits change events. transition_rate is
+      count-weighted; transition_balance_rate is balance-weighted and preferred
+      for ECL PD calibration. is_low_count_cell is a transparency flag — the mart
+      does not suppress low-count cells. Period controlled by var
+      roll_rate_period_months (default 1).
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: roll_rate_key
+        description: MD5 surrogate key over (product_type, score_band, observation_period, from_bucket, to_bucket).
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: product_type
+        description: Credit product type.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [personal_loan, auto_loan, mortgage, credit_card]
+      - name: score_band
+        description: Borrower score band at origination.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [prime_plus, prime, near_prime, subprime, super_prime]
+      - name: observation_period
+        description: First day of the aggregation period (monthly by default).
+        data_type: date
+        data_tests:
+          - not_null
+      - name: period_length_months
+        description: Value of var roll_rate_period_months; 1 by default.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: from_bucket
+        description: Delinquency state at the start of the observation period.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [current, dpd_30, dpd_60, dpd_90_plus, default, paid_off]
+      - name: to_bucket
+        description: Delinquency state at the end of the observation period.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [current, dpd_30, dpd_60, dpd_90_plus, default, paid_off]
+      - name: transition_loan_count
+        description: Count of loans making this transition in the period.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: at_risk_loan_count
+        description: Count of all active loans in the from_bucket at period start (denominator).
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: transition_balance
+        description: Sum of beginning_balance_amount for loans making this transition.
+        data_type: decimal(18, 2)
+        data_tests:
+          - not_null
+      - name: at_risk_balance
+        description: Sum of beginning_balance_amount for all at-risk loans in from_bucket.
+        data_type: decimal(18, 2)
+        data_tests:
+          - not_null
+      - name: transition_rate
+        description: Count-weighted transition probability (transition_loan_count / at_risk_loan_count).
+        data_type: decimal(10, 6)
+        data_tests:
+          - not_null
+      - name: transition_balance_rate
+        description: >
+          Balance-weighted transition rate (transition_balance / at_risk_balance). Preferred for
+          ECL PD calibration. NULL when at_risk_balance = 0 (e.g. revolving products with zero
+          outstanding balance in the observation period).
+        data_type: decimal(10, 6)
+      - name: is_low_count_cell
+        description: True when at_risk_loan_count < 10. Consumer gate — mart does not suppress these cells.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: _loaded_at
+        description: Timestamp when this row was loaded (UTC).
+        data_type: timestamp with time zone
+        data_tests:
+          - not_null
+
+  - name: mart_risk_vintage_curve
+    description: >
+      Cumulative default and prepayment rates by origination cohort, months-on-book,
+      product type, and score band. Cohort granularity controlled by var
+      vintage_cohort_granularity (default quarter). cumulative_default_rate denominator
+      is fixed cohort_loan_count (ABS/Fannie Mae convention). cumulative_prepayment_rate
+      denominator is surviving_non_defaulted_count (cohort minus prior defaults) —
+      the standard convention for voluntary prepayment analytics, since a defaulted
+      borrower cannot prepay. is_censored flags cells where fewer than 10 loans remain
+      observable; the mart does not suppress these cells. Prepayment definition:
+      is_prepayment = TRUE from fct_payment, set only on voluntary early-payoff months.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: vintage_curve_key
+        description: MD5 surrogate key over (origination_cohort_quarter, product_type, score_band, months_on_book).
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: origination_cohort_quarter
+        description: First day of the origination cohort period (quarter by default).
+        data_type: date
+        data_tests:
+          - not_null
+      - name: product_type
+        description: Credit product type.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [personal_loan, auto_loan, mortgage, credit_card]
+      - name: score_band
+        description: Borrower score band at origination.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [prime_plus, prime, near_prime, subprime, super_prime]
+      - name: months_on_book
+        description: Month number within the cohort's life (1 = origination month).
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: cohort_loan_count
+        description: Fixed count of loans in the cohort at origination. Denominator for cumulative_default_rate.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: cohort_principal
+        description: >
+          Sum of origination principal (amortizing products) or credit limit (credit cards) per
+          cohort — COALESCE(principal_amount, 0) + COALESCE(credit_limit_amount, 0). For
+          amortizing products credit_limit_amount is NULL so this equals principal_amount; for
+          credit cards principal_amount is NULL so this equals credit_limit_amount.
+        data_type: decimal(18, 2)
+        data_tests:
+          - not_null
+      - name: cumulative_default_count
+        description: Count of cohort loans that had defaulted by this months_on_book.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: cumulative_prepayment_count
+        description: Count of non-defaulted cohort loans that had prepaid by this months_on_book.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: surviving_non_defaulted_count
+        description: cohort_loan_count minus cumulative_default_count. Denominator for cumulative_prepayment_rate.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: loans_at_risk_count
+        description: cohort_loan_count minus cumulative defaults minus cumulative prepayments. For hazard rate consumers.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: cumulative_default_rate
+        description: cumulative_default_count / cohort_loan_count (ABS/Fannie Mae fixed-denominator convention).
+        data_type: decimal(10, 6)
+        data_tests:
+          - not_null
+      - name: cumulative_prepayment_rate
+        description: >
+          cumulative_prepayment_count / surviving_non_defaulted_count. NULL when
+          surviving_non_defaulted_count = 0 (entire cohort has defaulted). Voluntary
+          prepayment rate on the surviving non-defaulted pool.
+        data_type: decimal(10, 6)
+      - name: is_censored
+        description: True when loans_at_risk_count < 10. Transparency flag — mart does not suppress these cells.
+        data_type: boolean
+        data_tests:
+          - not_null
+      - name: _loaded_at
+        description: Timestamp when this row was loaded (UTC).
+        data_type: timestamp with time zone
+        data_tests:
+          - not_null
+
+  - name: mart_risk_prepayment_speed
+    description: >
+      Single Monthly Mortality (SMM) and annualized Constant Prepayment Rate (CPR)
+      per origination cohort, product type, and months-on-book. Amortizing products
+      only (personal_loan, auto_loan, mortgage) — credit cards excluded at the
+      intermediate layer via is_amortizing filter. SMM = prepaid_balance /
+      performing_pool_balance, where performing_pool_balance is the sum of
+      beginning_balance_amount for active non-prepaying loans entering the month.
+      prepaid_balance uses unscheduled principal (actual - scheduled when is_prepayment,
+      else 0) to correctly handle partial prepayments. CPR = 1 - (1 - SMM)^12 per
+      PSA convention. Both balance-based and count-based columns are exposed for
+      OSS package cross-verification. smm_rate and cpr_rate are NULL when the
+      performing pool balance is zero.
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: prepayment_speed_key
+        description: MD5 surrogate key over (origination_cohort_quarter, product_type, months_on_book).
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
+      - name: origination_cohort_quarter
+        description: First day of the origination cohort period.
+        data_type: date
+        data_tests:
+          - not_null
+      - name: product_type
+        description: Credit product type. Amortizing products only — credit_card never appears.
+        data_type: varchar
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [personal_loan, auto_loan, mortgage]
+      - name: months_on_book
+        description: Month number within the cohort's life.
+        data_type: integer
+        data_tests:
+          - not_null
+      - name: performing_pool_balance
+        description: Sum of beginning_balance_amount for active non-prepaying loans (SMM denominator).
+        data_type: decimal(18, 2)
+        data_tests:
+          - not_null
+      - name: prepaid_balance
+        description: Sum of unscheduled principal paid by prepaying loans (SMM numerator).
+        data_type: decimal(18, 2)
+        data_tests:
+          - not_null
+      - name: eligible_loan_count
+        description: Count of distinct loans in the performing pool. For count-based cross-verification.
+        data_type: bigint
+        data_tests:
+          - not_null
+      - name: prepaying_loan_count
+        description: Count of distinct loans that prepaid in this period. For count-based cross-verification.
+        data_type: bigint
+        data_tests:
+          - not_null
+      - name: smm_rate
+        description: Single Monthly Mortality = prepaid_balance / performing_pool_balance. NULL when performing_pool_balance = 0.
+        data_type: decimal(10, 6)
+      - name: cpr_rate
+        description: Constant Prepayment Rate = 1 - (1 - SMM)^12. NULL when smm_rate IS NULL.
+        data_type: decimal(10, 6)
+      - name: _loaded_at
+        description: Timestamp when this row was loaded (UTC).
+        data_type: timestamp with time zone
+        data_tests:
+          - not_null

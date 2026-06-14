@@ -1,0 +1,101 @@
+version: 2
+
+models:
+  - name: int_risk_roll_rate_observations
+    description: >
+      Mart-prep intermediate. Delinquency state-transition observations at the
+      (product_type, score_band, observation_period, from_bucket, to_bucket) grain.
+      At-risk denominator is the count of distinct active loans in each from_bucket at
+      the start of the observation period — includes loans that did not transition
+      (the stay-in-place self-transition residual). Self-transitions are computed as
+      at_risk_count minus all non-self transitions: a negative self-transition count
+      signals an upstream fct_payment grain violation.
+      Period length controlled by var roll_rate_period_months (default 1 month).
+    columns:
+      - name: product_type
+        description: Credit product type from dim_loan.
+        data_tests:
+          - not_null
+      - name: score_band
+        description: Borrower score band at origination from dim_loan.
+        data_tests:
+          - not_null
+      - name: observation_period
+        description: First day of the aggregation period.
+        data_tests:
+          - not_null
+      - name: period_length_months
+        description: Value of var roll_rate_period_months; literal in SELECT for self-description.
+        data_tests:
+          - not_null
+      - name: from_bucket
+        description: Delinquency bucket at the start of the observation period.
+        data_tests:
+          - not_null
+      - name: to_bucket
+        description: Delinquency bucket at the end of the observation period (same = self-transition).
+        data_tests:
+          - not_null
+      - name: transition_count
+        description: Count of distinct loans making this specific transition.
+        data_tests:
+          - not_null
+      - name: transition_balance_sum
+        description: Sum of beginning_balance_amount for loans making this transition.
+        data_tests:
+          - not_null
+      - name: at_risk_count
+        description: Count of distinct active loans in the from_bucket at period start (denominator).
+        data_tests:
+          - not_null
+      - name: beginning_balance_sum
+        description: Sum of beginning_balance_amount for all at-risk loans in this from_bucket.
+        data_tests:
+          - not_null
+      - name: is_low_count_cell
+        description: True when at_risk_count < 10. Transparency flag for downstream consumers.
+        data_tests:
+          - not_null
+
+  - name: int_risk_vintage_cohort_spine
+    description: >
+      Mart-prep intermediate. Per-loan-per-MOB spine feeding mart_risk_prepayment_speed.
+      One row per (loan_id, origination_cohort_quarter, months_on_book). Cohort granularity
+      controlled by var vintage_cohort_granularity (default quarter; month also valid).
+      Computes unscheduled_principal = GREATEST(actual - scheduled, 0) when is_prepayment,
+      else 0 — handles partial prepayments correctly. mart_risk_vintage_curve computes its
+      cumulative counts directly from fct_loan_origination and fct_loan_lifecycle via an
+      explicit cohort x MOB cross-join (see ADR-0006 §2 and §4).
+    columns:
+      - name: loan_id
+        description: Natural key of the loan.
+        data_tests:
+          - not_null
+      - name: origination_cohort_quarter
+        description: >
+          First day of the cohort period (quarter or month depending on
+          vintage_cohort_granularity var) derived from origination_month.
+        data_tests:
+          - not_null
+      - name: product_type
+        description: Credit product type.
+        data_tests:
+          - not_null
+      - name: score_band
+        description: Borrower score band at origination.
+        data_tests:
+          - not_null
+      - name: is_amortizing
+        description: True for personal_loan, auto_loan, mortgage. False for credit_card.
+        data_tests:
+          - not_null
+      - name: months_on_book
+        description: Month number within the loan's life (1 = origination month).
+        data_tests:
+          - not_null
+      - name: unscheduled_principal
+        description: >
+          Unscheduled principal paid in this month: GREATEST(actual - scheduled, 0)
+          when is_prepayment else 0. Correctly captures partial prepayment amounts.
+        data_tests:
+          - not_null
