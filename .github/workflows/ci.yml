@@ -17,10 +17,51 @@ jobs:
       - run: mkdir -p data/local
       - run: uv run sqlfluff lint models seeds snapshots tests/dbt
       - run: make generate
+      - run: uv run dbt deps
+        env:
+          DBT_PROFILES_DIR: .
       - run: uv run pytest -v
+        env:
+          DBT_PROFILES_DIR: .
       - run: uv run dbt parse
         env:
           DBT_PROFILES_DIR: .
       - run: uv run dbt build --select staging
         env:
           DBT_PROFILES_DIR: .
+      # Asset-materialization path: Dagster runs `dbt build` via DbtCliResource
+      # (subprocess) and evaluates the @asset_check quality gates. An ERROR-
+      # severity gate failure fails the run.
+      - run: make dagster-materialize
+        env:
+          DBT_PROFILES_DIR: .
+      # Real observability artifact: generate the Elementary HTML report from the
+      # captured test/run results and publish it as a build artifact.
+      - run: make elementary-report
+        env:
+          DBT_PROFILES_DIR: .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elementary-report
+          path: artifacts/elementary_report.html
+          if-no-files-found: error
+
+  # Reusable security layer — runs on every PR. bandit (Python SAST) + pip-audit
+  # (dependency CVEs) + gitleaks (secret scan). This is the portfolio-wide
+  # reference pattern; other repos copy this job.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v8.2.0
+      - run: uv sync --locked
+      - name: bandit (Python SAST)
+        run: uv run bandit -r src -c pyproject.toml
+      - name: pip-audit (dependency CVEs)
+        run: uv run pip-audit
+      - name: gitleaks (secret scan)
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

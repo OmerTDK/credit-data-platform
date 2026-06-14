@@ -12,3 +12,6 @@ logs/
 data/local/
 data/landing/
 .user.yml
+artifacts/
+package-lock.yml
+edr_target/
