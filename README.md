@@ -2,7 +2,9 @@
 
 Multi-product consumer-credit data platform: calibrated synthetic loan book, dimensional + event-sourced dbt warehouse, IFRS 9 ECL, semantic layer, observability
 
-> Status: Phases 0–4 complete. Phase 5 (semantic layer) next.
+> Status: Phases 0–5 complete. Semantic layer next.
+
+**Phase 5 done:** orchestration + observability + security hardening — Dagster exposes the dbt project as **34 software-defined assets** (28 models + 4 seeds + 3 sources, keyed by schema path) via `@dbt_assets`, materialized by running `dbt build` through `DbtCliResource` (managed subprocess, never a bare shell build). **3 custom `@asset_check` quality gates** with ERROR/WARN severity: `ecl_stage_ecl_strictly_positive` (ERROR — Stage 1 = $1.50 M / Stage 2 = $0.92 M portfolio ECL must be > 0 in every scenario; the ADR-0007 regression, now CI-enforced), `facts_resolve_to_dim_loan` (ERROR — 0 orphan loan_ids across `fct_payment` / `fct_loan_state_event` / `mart_finance_ecl_allowance`), `ecl_allowance_volume_within_band` (WARN — 48,000 rows within band). Gate logic is pure functions with **5 unit + 2 kill tests** (zeroing Stage 1 ECL fires the gate; deleting a `dim_loan` row fires referential integrity). **Elementary** observability: 4 anomaly/schema tests on `fct_payment` + `mart_finance_ecl_summary`, 400 captured test results, a real 7.4 MB `edr report` HTML artifact published from CI. **Security CI layer**: bandit (Python SAST, 0 issues) + pip-audit (0 known CVEs) + gitleaks (secret scan) on every PR. Full Dagster materialization builds **464 dbt nodes** green; full CI green in ~100 s end-to-end — see [ADR-0008](docs/adr/0008-orchestration-dagster-asset-centric.md), [ADR-0009](docs/adr/0009-observability-elementary.md), [ADR-0010](docs/adr/0010-security-ci-layer.md).
 
 **Phase 4 done:** IFRS 9 ECL layer — 11 new dbt models (4 seeds + 5 intermediate views + 2 mart_finance tables), 70 new dbt data tests (2 enforced contracts, 13 custom invariant singular tests), 28 new pytest tests (14 backtest validation + 14 ECL mart integration), 48,000 allowance rows (12,000 loans × 4 scenarios) / 3,584 summary rows — 11,036 Stage 1 / 191 Stage 2 / 773 Stage 3 loans — probability-weighted ECL ~$1.4 M — kill-test verified (assert_ecl_stage3_pd_equals_one: 2,319 violations on mutation) — simplified proxy backtest aggregate coverage ratio 0.67 (acceptance bounds [0.5, 2.0]) — full CI green in ~42 s — see [ADR-0007](docs/adr/0007-ifrs9-ecl-methodology.md).
 
@@ -41,6 +43,11 @@ Landing zone (parquet)
        v
 [ Marts ]                 mart_risk: roll-rate matrix, vintage curves, prepayment speed
                           mart_finance: IFRS 9 ECL allowance + summary (Phase 4)
+       |
+       v
+[ Orchestration ]         Dagster @dbt_assets (DbtCliResource) + 3 asset-check gates (Phase 5)
+[ Observability ]         Elementary test-result / volume / schema monitors -> edr report
+[ Security CI ]           bandit + pip-audit + gitleaks on every PR
 ```
 
 ### DWH layer (Phase 2b)
@@ -86,6 +93,24 @@ Two mart-prep intermediates live in `models/intermediate/risk/`:
 
 Ten custom singular tests cover invariants no generic test can express: probabilities sum to 1.0, no negative self-transitions, monotonic cumulative defaults and prepayments, rates in [0,1], CPR formula correctness (1-(1-SMM)^12), non-negative derived counts. Kill-test verified: injecting +1 to `transition_loan_count` fires 1,762 violations; exponent mutant (12→1) fires 454 CPR formula violations.
 
+### Orchestration, observability, and security (Phase 5)
+
+**Dagster.** `src/orchestration/definitions.py` exposes the dbt project as software-defined assets via a single `@dbt_assets` definition over the dbt manifest — 34 assets (28 models + 4 seeds + 3 sources), keyed by schema path. Materialization runs `dbt build` through `DbtCliResource` (a managed subprocess, streamed into Dagster as asset materializations and per-test asset checks). `make dagster-materialize` runs the implicit asset job in-process; `make dagster-dev` opens the browsable asset graph.
+
+**Quality gates.** Three `@asset_check` gates attach to the ECL marts. Their logic lives in pure functions (`src/orchestration/checks.py`) over the built DuckDB, so each is unit- and kill-testable without a Dagster run:
+
+| Gate | Severity | What it catches | Live value |
+|------|----------|-----------------|-----------|
+| `ecl_stage_ecl_strictly_positive` | ERROR (blocking) | The ADR-0007 regression: a PD-term-structure change zeroing the performing book's allowance. Min per-scenario Stage 1 / Stage 2 portfolio ECL must be > 0. | Stage 1 min $972,372 / Stage 2 min $613,344 |
+| `facts_resolve_to_dim_loan` | ERROR (blocking) | Orphan loan_ids in `fct_payment`, `fct_loan_state_event`, `mart_finance_ecl_allowance` not present in `dim_loan`. | 0 orphans |
+| `ecl_allowance_volume_within_band` | WARN | ECL allowance row count drifting outside the expected band [20,000, 120,000]. | 48,000 rows |
+
+Kill-test verified: zeroing `total_ecl_amount` for Stage 1 on a copy of the summary mart makes `ecl_stage_ecl_strictly_positive` fail (min_stage1_ecl → 0); deleting one `dim_loan` row makes `facts_resolve_to_dim_loan` fail (orphans > 0).
+
+**Elementary observability.** `fct_payment` (volume anomalies time-bucketed by `report_month` across 35 months + schema changes) and `mart_finance_ecl_summary` (volume anomalies + schema changes) carry Elementary monitors at WARN severity. A full build captures 400 test results into the `elementary` schema; `make elementary-report` produces a real ~7.4 MB `edr report` HTML artifact, uploaded from CI on every PR.
+
+**Security CI.** A separate `security` GitHub Actions job runs on every PR: bandit (Python SAST, **0 issues**), pip-audit (dependency CVEs, **0 known vulnerabilities**), and gitleaks (full-history secret scan). `make security` runs bandit + pip-audit locally.
+
 ## Results
 
 | Metric | Value |
@@ -95,10 +120,14 @@ Ten custom singular tests cover invariants no generic test can express: probabil
 | DWH build (staging + intermediate + DWH) | 9 tables + 7 views + 258 data tests in ~2.4 s |
 | Risk mart build (intermediates + 3 mart tables) | 75 data tests in ~0.8 s |
 | Full build (all 21 models) | 333 data tests in ~2.1 s |
-| Full CI (ruff + sqlfluff + generate + pytest + dbt-parse + all dbt builds) | ~42 s end-to-end |
-| Total dbt data tests | see make ci output (counts grow with fixes; includes unique tests on ecl_allowance_key and ecl_summary_key) |
-| Total pytest tests | 392 (321 generator + 3 staging integration + 17 DWH integration + 21 risk-mart integration + 14 ECL mart integration + 14 ECL backtest + 1 dbt project + 1 segment coverage) |
-| Custom dbt singular invariant tests | 35 (9 DWH + 10 risk mart + 13 ECL: stage in {1,2,3}, ECL >= 0, ECL <= EAD, stage 2/3 use lifetime PD, stage 1 uses 12m PD, scenario weights sum to 1, PW ECL matches weighted sum, stage 3 PD = 1.0, PD in [0,1], DPD30 triggers stage 2, DPD60 triggers stage 2, relative-PD trigger classifies stage 2, origination PD non-zero; + 3 staging) |
+| Full CI (ruff + sqlfluff + generate + pytest + dbt-parse + scoped builds + Dagster materialize) | ~100 s end-to-end |
+| Dagster software-defined assets | 34 (28 dbt models + 4 seeds + 3 sources) via one `@dbt_assets` over the manifest |
+| Dagster asset-check gates | 3 custom (2 ERROR-blocking + 1 WARN) + every dbt schema test surfaced as a check |
+| Full Dagster materialization | 464 dbt nodes PASS / 0 ERROR (dbt build via DbtCliResource + all gates) |
+| Elementary observability | 4 anomaly/schema monitors, 400 captured test results, 7.4 MB `edr report` HTML artifact |
+| Security scanners (every PR) | bandit 0 issues + pip-audit 0 known CVEs + gitleaks secret scan |
+| Total pytest tests | 401 (391 prior + 10 Phase 5: 5 asset-check unit/kill + 4 Dagster definitions + 1 materialization integration) |
+| Custom dbt singular invariant tests | 35 (9 DWH + 10 risk mart + 13 ECL + 3 staging) |
 | DWH models with enforced contracts | 9 of 9 |
 | Risk mart models with enforced contracts | 3 of 3 |
 | ECL mart models with enforced contracts | 2 of 2 |
@@ -119,6 +148,9 @@ See [docs/adr/](docs/adr/) — each major decision documented with its trade-off
 - [ADR-0005](docs/adr/0005-dimensional-layer-and-event-sourced-loan-state.md) — dimensional layer and event-sourced loan state
 - [ADR-0006](docs/adr/0006-risk-marts-methodology.md) — risk marts methodology (roll-rate denominator, vintage MOB spine, SMM/CPR)
 - [ADR-0007](docs/adr/0007-ifrs9-ecl-methodology.md) — IFRS 9 ECL methodology (stationary Markov PD, three SICR triggers, scenario weighting, backtest in Python)
+- [ADR-0008](docs/adr/0008-orchestration-dagster-asset-centric.md) — asset-centric orchestration with Dagster + dagster-dbt (asset checks vs Makefile)
+- [ADR-0009](docs/adr/0009-observability-elementary.md) — data observability with Elementary (capture gating, anomaly monitors, edr report)
+- [ADR-0010](docs/adr/0010-security-ci-layer.md) — security CI layer (bandit + pip-audit + gitleaks)
 
 ## Quickstart
 
@@ -136,7 +168,21 @@ make dbt-build-dwh
 # Build risk marts on top of the DWH
 uv run dbt build --select "int_risk_roll_rate_observations int_risk_vintage_cohort_spine mart_risk_roll_rate_matrix mart_risk_vintage_curve mart_risk_prepayment_speed" --profiles-dir .
 
-# Run the full CI suite (ruff + sqlfluff + pytest + dbt build)
+# Install dbt packages (Elementary), then materialize everything through Dagster
+# (dbt build via DbtCliResource) and run the asset-check quality gates
+uv run dbt deps
+make dagster-materialize
+
+# Browse the asset graph + checks in the Dagster UI
+make dagster-dev
+
+# Generate the Elementary observability report (artifacts/elementary_report.html)
+make elementary-report
+
+# Run the security scanners (bandit + pip-audit)
+make security
+
+# Run the full CI suite (ruff + sqlfluff + pytest + dbt builds + Dagster materialize)
 make ci
 ```
 
