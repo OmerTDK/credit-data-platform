@@ -50,6 +50,7 @@ probability_weighted as (
 )
 
 select
+    {{ generate_surrogate_key(['loan_id', 'scenario_name']) }} as ecl_allowance_key,
     loan_id,
     as_of_date,
     ifrs9_stage,
@@ -67,6 +68,7 @@ from scenario_rows
 union all
 
 select
+    {{ generate_surrogate_key(['loan_id', 'scenario_name']) }} as ecl_allowance_key,
     loan_id,
     as_of_date,
     ifrs9_stage,

@@ -1,10 +1,5 @@
--- Mart-prep intermediate. Computes base Loss Given Default (LGD) per loan.
--- Grain: one row per loan_id.
---
--- LGD is product-type driven: unsecured products have higher LGD than collateralized.
--- Base LGD comes from seeds/ecl_lgd_parameters.csv. Scenario LGD scalars are applied
--- in int_ecl_components where the scenario cross-join occurs, keeping this intermediate
--- scenario-agnostic and the LGD seed values as the single source of truth.
+-- Mart-prep intermediate. Reads DWH facts/dimensions and risk marts to build
+-- ECL-specific base LGD per loan for downstream mart_finance_ecl_* marts.
 
 {{ config(materialized='view') }}
 

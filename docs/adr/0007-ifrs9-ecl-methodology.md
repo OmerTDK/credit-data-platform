@@ -36,7 +36,7 @@ into 4+ intermediates with dependency chains that obscure the logic.
 **Chosen approach:** Stationary Markov closed-form.
 
 Under the stationary assumption (time-averaged transition rates), the 12-month
-cumulative PD from a given starting bucket simplifies to:
+cumulative PD from a given starting bucket is approximated as:
 
 ```
 pd_12m = 1 - (1 - p_default_step)^12
@@ -46,12 +46,29 @@ where `p_default_step` is the balance-weighted average probability of transition
 into the `default` absorbing state in one step, derived from
 `mart_risk_roll_rate_matrix.transition_balance_rate`.
 
-**Tradeoff:** The stationary assumption loses path-dependency (a loan that
-moves from `current` → `dpd_30` → `current` is treated the same as one that
-stays `current` throughout). For the synthetic book this is acceptable — the
-generator uses a stationary transition matrix by construction, so the stationarity
-assumption is exact here. On a real book with macro-driven non-stationarity,
-this would understate PD in stress periods.
+**Important caveat on formula scope:** This formula equals zero when there is no
+direct one-step transition from the starting bucket to `default` (i.e., when
+`p_default_step = 0`). For the 5-state chain (`current`, `dpd_30`, `dpd_60`,
+`dpd_90_plus`, `default`), buckets `current`, `dpd_30`, and `dpd_60` have no
+direct transition to `default` in the synthetic book — loans must step through
+intermediate buckets. `int_ecl_pd_term_structure` addresses this by including
+all four active delinquency buckets in the spine (via `segment_bucket_spine`),
+and for buckets with no direct-to-default step rate, `pd_12m = 0` — the
+vintage-curve terminal CDR then serves as the floor for `pd_lifetime` (see
+below). A full 5-state × 12-step Markov matrix exponentiation would yield
+the correct multi-hop first-passage probabilities but was rejected for verbosity.
+
+**Tradeoff:** The formula is an approximation that underestimates 12m PD for
+`current`, `dpd_30`, and `dpd_60` buckets (producing 0 instead of the correct
+multi-hop probability). Stage 1/2 ECL is therefore calibrated primarily through
+the lifetime PD from the vintage curve, not the 12m PD term structure. On a
+real book, a proper Markov matrix exponentiation or cohort-based CDR term
+structure would be required for regulatory sign-off.
+
+**Tradeoff on stationarity:** Path-dependency is also lost (a loan that moves
+`current` → `dpd_30` → `current` is treated the same as one that stays
+`current`). For the synthetic book this is acceptable — the generator uses a
+stationary transition matrix by construction.
 
 **Rationale for choosing `transition_balance_rate` over `transition_rate`:**
 Per the Phase 3 YAML description, balance-weighted rates are preferred for ECL
@@ -131,6 +148,16 @@ The Python approach reads seeds from CSV (zero warehouse dependency for paramete
 validation) and DWH data from DuckDB. This keeps the backtest runnable in CI
 without a live warehouse connection.
 
+**Simplified PD methodology in backtest (intentional):** The backtest uses flat
+PD estimates by IFRS 9 stage (Stage 1 = 5%, Stage 2 = 15%, Stage 3 = 100%)
+rather than the Markov-derived PDs from `mart_finance_ecl_allowance`. This is a
+deliberate simplification: the backtest validates the EAD/LGD parameterisation
+and realized-loss measurement pipeline, not the Markov PD methodology itself.
+The coverage ratio [0.5, 2.0] acceptance gate is calibrated for the flat-PD
+proxy model, not for the deployed ECL. To validate the Markov PD, the backtest
+would need to read `mart_finance_ecl_allowance` (baseline scenario) at each
+historical as_of_date — a future enhancement.
+
 ---
 
 ## Decision: Three SICR triggers applied as OR conditions
@@ -145,6 +172,13 @@ quantitative and qualitative factors. Three independent triggers are applied:
 2. **Relative PD multiple:** `current_lifetime_pd / origination_lifetime_pd`
    exceeds `ecl_sicr_lifetime_pd_multiple` (default 2.0x). Captures structural
    deterioration in creditworthiness beyond delinquency.
+
+   **Implementation note:** `origination_pd_rate` is the static `current`-bucket
+   lifetime PD for the loan's `(product_type, score_band)` segment — a cohort
+   segment average, not a per-loan time-of-origination PD. The relative trigger
+   therefore fires when a loan's current delinquency bucket has a lifetime PD
+   exceeding twice the segment's `current`-bucket terminal CDR. On a real book,
+   IFRS 9 would require capturing the per-loan PD at the original drawdown date.
 
 3. **Absolute PD delta:** `current_lifetime_pd - origination_lifetime_pd`
    exceeds `ecl_sicr_pd_delta_bp / 10000` (default 200 bps). Guards against

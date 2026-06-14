@@ -13,6 +13,12 @@ models:
       contract:
         enforced: true
     columns:
+      - name: ecl_allowance_key
+        description: Surrogate key — MD5 over (loan_id, scenario_name). Enforces grain uniqueness.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
       - name: loan_id
         description: Natural key of the loan.
         data_type: varchar
@@ -73,7 +79,12 @@ models:
         data_tests:
           - not_null
       - name: ecl_amount
-        description: Expected Credit Loss in dollars = pd_rate * lgd_rate * ead_amount * discount_factor.
+        description: >
+          Expected Credit Loss in dollars.
+          For scenario rows (baseline/adverse/upside): pd_rate * lgd_rate * ead_amount * discount_factor.
+          For the probability_weighted row: probability-weighted average of the three scenario ecl_amounts
+          (NOT the product of the marginal pd_rate * lgd_rate * ead_amount columns, which are themselves
+          probability-weighted averages of component inputs).
         data_type: decimal(18, 6)
         data_tests:
           - not_null
@@ -89,10 +100,23 @@ models:
       (as_of_date, product_type, score_band, ifrs9_stage, scenario_name).
       Includes all 4 scenario_name values (baseline, adverse, upside,
       probability_weighted). coverage_rate = total_ecl_amount / total_ead_amount.
+
+      Note: this mart references mart_finance_ecl_allowance (a same-domain mart),
+      which is a documented exception to the Marts:DWH-only rule in dbt-standards.md.
+      The probability_weighted rows and enforced contract columns on ecl_allowance_key
+      are expressed in mart_finance_ecl_allowance; duplicating that logic here would
+      be worse than the mart-to-mart dependency. This exception is intentional and
+      limited to same-domain finance mart aggregation chains.
     config:
       contract:
         enforced: true
     columns:
+      - name: ecl_summary_key
+        description: Surrogate key — MD5 over (as_of_date, product_type, score_band, ifrs9_stage, scenario_name). Enforces grain uniqueness.
+        data_type: varchar
+        data_tests:
+          - unique
+          - not_null
       - name: as_of_date
         description: ECL reference date.
         data_type: date

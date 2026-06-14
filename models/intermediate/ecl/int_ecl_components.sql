@@ -1,20 +1,5 @@
--- Mart-prep intermediate. Assembles ECL components per (loan_id, scenario_name).
--- Grain: one row per (loan_id, scenario_name) — 3 scenario rows per loan.
---
--- PD selection:
---   Stage 1: 12-month PD * pd_scalar, clamped to [0, 1].
---   Stage 2: lifetime PD * pd_scalar, clamped to [0, 1].
---   Stage 3: PD = 1.0 (credit-impaired; IFRS 9 §5.5.3).
---
--- LGD: base_lgd_rate * lgd_scalar, clamped to [0, 1].
--- EAD: scenario-agnostic (contractual/behavioral, not macro-sensitive per ADR-0007).
---
--- Discount factor (toggled by ecl_include_discount_factor var):
---   Stage 1 horizon: 6 months.
---   Stage 2/3 horizon: remaining_term_months / 2.
---   When toggle is false (default), discount_factor = 1.0 (no discounting).
---
--- ECL = pd_rate * lgd_rate * ead_amount * discount_factor.
+-- Mart-prep intermediate. Reads DWH facts/dimensions and risk marts to build
+-- ECL-specific component inputs (PD, LGD, EAD, discount factor) for downstream mart_finance_ecl_* marts.
 
 {{ config(materialized='view') }}
 
@@ -24,7 +9,8 @@ with constants as (
             as credit_card_term_months,
         cast({{ var('ecl_include_discount_factor') }} as boolean)
             as include_discount_factor,
-        6 as stage1_horizon_months
+        6 as stage1_horizon_months,
+        12.0 as months_per_year
 ),
 
 staging as (
@@ -85,7 +71,8 @@ loan_scenario_grid as (
         scenarios.lgd_scalar,
         constants.credit_card_term_months,
         constants.include_discount_factor,
-        constants.stage1_horizon_months
+        constants.stage1_horizon_months,
+        constants.months_per_year
     from staging
     inner join lgd
         on staging.loan_id = lgd.loan_id
@@ -153,7 +140,7 @@ ecl_computed as (
                     then 1.0 / power(
                         cast(
                             1.0 + loan_scenario_grid.interest_rate
-                            / 12.0 as decimal(10, 8)
+                            / loan_scenario_grid.months_per_year as decimal(10, 8)
                         ),
                         loan_scenario_grid.stage1_horizon_months
                     )
@@ -161,7 +148,7 @@ ecl_computed as (
                     1.0 / power(
                         cast(
                             1.0 + loan_scenario_grid.interest_rate
-                            / 12.0 as decimal(10, 8)
+                            / loan_scenario_grid.months_per_year as decimal(10, 8)
                         ),
                         cast(
                             greatest(

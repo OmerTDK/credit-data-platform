@@ -1,56 +1,85 @@
 -- Mart-prep intermediate. Reads DWH facts/dimensions and risk marts to build
 -- ECL-specific PD term structure for downstream mart_finance_ecl_* marts.
---
--- 12-month PD: derived from the roll-rate matrix transition_balance_rate column
--- (balance-weighted per ADR-0007) using the one-step default absorption rate
--- averaged across all observation periods. The 12-month cumulative PD is the
--- complement of surviving 12 steps without defaulting: 1 - (1 - p_default_step)^12.
--- This closed-form is equivalent to the 12-CTE Markov unroll when the chain is
--- stationary (transition rates are time-averaged), and keeps each CTE under 40 lines.
---
--- Lifetime PD: read directly from mart_risk_vintage_curve as the cohort-averaged
--- terminal cumulative default rate. For loans near maturity where the vintage curve
--- is censored at high MOB, the last non-censored CDR is used via LAST_VALUE.
 
 {{ config(materialized='view') }}
 
 with constants as (
+    select 12 as markov_step_count
+),
+
+delinquency_buckets as (
+    select 'current' as bucket
+    union all
+    select 'dpd_30' as bucket
+    union all
+    select 'dpd_60' as bucket
+    union all
+    select 'dpd_90_plus' as bucket
+),
+
+all_segments as (
+    select distinct
+        mart_risk_roll_rate_matrix.product_type,
+        mart_risk_roll_rate_matrix.score_band
+    from {{ ref('mart_risk_roll_rate_matrix') }} as mart_risk_roll_rate_matrix
+    where mart_risk_roll_rate_matrix.transition_balance_rate is not null
+),
+
+segment_bucket_spine as (
     select
-        cast({{ var('ecl_credit_card_behavioural_maturity_months') }} as integer)
-            as credit_card_term_months
+        all_segments.product_type,
+        all_segments.score_band,
+        delinquency_buckets.bucket as starting_bucket
+    from all_segments
+    cross join delinquency_buckets
 ),
 
 default_step_rates as (
     select
-        product_type,
-        score_band,
-        from_bucket,
-        avg(transition_balance_rate) as avg_default_step_rate
-    from {{ ref('mart_risk_roll_rate_matrix') }}
+        mart_risk_roll_rate_matrix.product_type,
+        mart_risk_roll_rate_matrix.score_band,
+        mart_risk_roll_rate_matrix.from_bucket,
+        avg(mart_risk_roll_rate_matrix.transition_balance_rate) as avg_default_step_rate
+    from {{ ref('mart_risk_roll_rate_matrix') }} as mart_risk_roll_rate_matrix
     where
-        to_bucket = 'default'
-        and transition_balance_rate is not null
-    group by product_type, score_band, from_bucket
+        mart_risk_roll_rate_matrix.to_bucket = 'default'
+        and mart_risk_roll_rate_matrix.transition_balance_rate is not null
+    group by
+        mart_risk_roll_rate_matrix.product_type,
+        mart_risk_roll_rate_matrix.score_band,
+        mart_risk_roll_rate_matrix.from_bucket
 ),
 
 pd_12m_raw as (
     select
-        default_step_rates.product_type,
-        default_step_rates.score_band,
-        default_step_rates.from_bucket as starting_bucket,
+        segment_bucket_spine.product_type,
+        segment_bucket_spine.score_band,
+        segment_bucket_spine.starting_bucket,
         cast(
             greatest(
                 0.0,
                 least(
                     1.0,
-                    1.0 - power(
-                        cast(1.0 - default_step_rates.avg_default_step_rate as decimal(10, 8)),
-                        12
+                    coalesce(
+                        1.0 - power(
+                            cast(
+                                1.0 - default_step_rates.avg_default_step_rate
+                                as decimal(10, 8)
+                            ),
+                            constants.markov_step_count
+                        ),
+                        0.0
                     )
                 )
             ) as decimal(10, 8)
         ) as pd_12m
-    from default_step_rates
+    from segment_bucket_spine
+    left join default_step_rates
+        on
+            segment_bucket_spine.product_type = default_step_rates.product_type
+            and segment_bucket_spine.score_band = default_step_rates.score_band
+            and segment_bucket_spine.starting_bucket = default_step_rates.from_bucket
+    cross join constants
 ),
 
 vintage_non_censored as (
@@ -115,4 +144,3 @@ left join avg_lifetime_pd
     on
         pd_12m_raw.product_type = avg_lifetime_pd.product_type
         and pd_12m_raw.score_band = avg_lifetime_pd.score_band
-cross join constants

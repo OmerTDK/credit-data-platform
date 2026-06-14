@@ -4,7 +4,7 @@ Multi-product consumer-credit data platform: calibrated synthetic loan book, dim
 
 > Status: Phases 0–4 complete. Phase 5 (semantic layer) next.
 
-**Phase 4 done:** IFRS 9 ECL layer — 7 new dbt models (4 seeds + 5 intermediate views + 2 mart_finance tables), 68 new dbt data tests (2 enforced contracts, 11 custom invariant singular tests), 27 new pytest tests (13 backtest validation + 14 ECL mart integration), 48,000 allowance rows (12,000 loans × 4 scenarios) / 3,584 summary rows — 11,036 Stage 1 / 191 Stage 2 / 773 Stage 3 loans — probability-weighted ECL ~$1.4 M — kill-test verified (assert_ecl_stage3_pd_equals_one: 2,319 violations on mutation) — full CI green in ~42 s — see [ADR-0007](docs/adr/0007-ifrs9-ecl-methodology.md).
+**Phase 4 done:** IFRS 9 ECL layer — 11 new dbt models (4 seeds + 5 intermediate views + 2 mart_finance tables), 70 new dbt data tests (2 enforced contracts, 13 custom invariant singular tests), 28 new pytest tests (14 backtest validation + 14 ECL mart integration), 48,000 allowance rows (12,000 loans × 4 scenarios) / 3,584 summary rows — 11,036 Stage 1 / 191 Stage 2 / 773 Stage 3 loans — probability-weighted ECL ~$1.4 M — kill-test verified (assert_ecl_stage3_pd_equals_one: 2,319 violations on mutation) — simplified proxy backtest aggregate coverage ratio 0.67 (acceptance bounds [0.5, 2.0]) — full CI green in ~42 s — see [ADR-0007](docs/adr/0007-ifrs9-ecl-methodology.md).
 
 **Phase 3 done:** risk analytics marts — roll-rate matrix, vintage curves, prepayment speed — 5 new dbt models (3 mart tables + 2 mart-prep intermediate views), 75 new dbt data tests (3 enforced contracts, 10 custom invariant singular tests), 21 new pytest integration tests, 3,633 roll-rate rows / 3,920 vintage-curve rows / 588 prepayment-speed rows — full CI green in ~32 s — see [ADR-0006](docs/adr/0006-risk-marts-methodology.md).
 
@@ -78,7 +78,7 @@ Landing zone (parquet)
 | `mart_finance.mart_finance_ecl_allowance` | (loan_id, scenario_name) | 48,000 | 3 per-scenario rows + 1 probability-weighted row per loan; enforced contract |
 | `mart_finance.mart_finance_ecl_summary` | (as_of_date, product_type, score_band, ifrs9_stage, scenario_name) | 3,584 | Aggregates allowance to portfolio segments |
 
-ECL model: stationary Markov 12m PD from roll-rate matrix; lifetime PD from vintage curve terminal CDR. Stage 2 SICR triggers: DPD >= 30 (quantitative backstop) OR relative PD multiple (2.0×) OR absolute PD delta (200 bps) OR watchlist. Stage 3 PD = 1.0 (IFRS 9 §5.5.3). Three scenarios (baseline / adverse / upside) with probability weighting. Discount factor toggleable (off by default). ECL backtest over 8 quarterly dates (2022-Q1 to 2023-Q4): aggregate coverage ratio [0.5, 2.0].
+ECL model: stationary Markov 12m PD from roll-rate matrix (approximation — 0 for buckets with no direct-to-default step; see ADR-0007); lifetime PD from vintage curve terminal CDR (covers all delinquency buckets). Stage 2 SICR triggers: DPD >= 30 (quantitative backstop) OR relative PD multiple (2.0×) OR absolute PD delta (200 bps) OR watchlist. Stage 3 PD = 1.0 (IFRS 9 §5.5.3). Three scenarios (baseline / adverse / upside) with probability weighting. Discount factor toggleable (off by default). Simplified proxy backtest over 8 quarterly dates (2022-Q1 to 2023-Q4): aggregate coverage ratio 0.67 (acceptance bounds [0.5, 2.0]); proxy uses flat stage PDs (5%/15%/100%), not the Markov PDs — see ADR-0007.
 
 Two mart-prep intermediates live in `models/intermediate/risk/`:
 - `int_risk_roll_rate_observations` — shifted-denominator roll-rate observations; reads `fct_payment`, `fct_loan_state_event`, `dim_loan`
@@ -96,9 +96,9 @@ Ten custom singular tests cover invariants no generic test can express: probabil
 | Risk mart build (intermediates + 3 mart tables) | 75 data tests in ~0.8 s |
 | Full build (all 21 models) | 333 data tests in ~2.1 s |
 | Full CI (ruff + sqlfluff + generate + pytest + dbt-parse + all dbt builds) | ~42 s end-to-end |
-| Total dbt data tests | 401 (43 staging + 40 intermediate + 182 DWH + 47 mart-risk + 57 mart-finance + 33 singular) |
-| Total pytest tests | 390 (321 generator + 3 staging integration + 17 DWH integration + 21 risk-mart integration + 14 ECL mart integration + 13 ECL backtest + 1 dbt project) |
-| Custom dbt singular invariant tests | 33 (9 DWH + 10 risk mart + 11 ECL: stage in {1,2,3}, ECL >= 0, ECL <= EAD, stage 2/3 use lifetime PD, stage 1 uses 12m PD, scenario weights sum to 1, PW ECL within bounds, stage 3 PD = 1.0, PD in [0,1], DPD30 triggers stage 2, origination PD populated; + 3 staging) |
+| Total dbt data tests | see make ci output (counts grow with fixes; includes unique tests on ecl_allowance_key and ecl_summary_key) |
+| Total pytest tests | 392 (321 generator + 3 staging integration + 17 DWH integration + 21 risk-mart integration + 14 ECL mart integration + 14 ECL backtest + 1 dbt project + 1 segment coverage) |
+| Custom dbt singular invariant tests | 35 (9 DWH + 10 risk mart + 13 ECL: stage in {1,2,3}, ECL >= 0, ECL <= EAD, stage 2/3 use lifetime PD, stage 1 uses 12m PD, scenario weights sum to 1, PW ECL matches weighted sum, stage 3 PD = 1.0, PD in [0,1], DPD30 triggers stage 2, DPD60 triggers stage 2, relative-PD trigger classifies stage 2, origination PD non-zero; + 3 staging) |
 | DWH models with enforced contracts | 9 of 9 |
 | Risk mart models with enforced contracts | 3 of 3 |
 | ECL mart models with enforced contracts | 2 of 2 |

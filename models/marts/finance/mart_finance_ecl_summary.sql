@@ -38,6 +38,13 @@ allowance_with_attrs as (
 )
 
 select
+    {{ generate_surrogate_key([
+        'allowance_with_attrs.as_of_date',
+        'allowance_with_attrs.product_type',
+        'allowance_with_attrs.score_band',
+        'cast(allowance_with_attrs.ifrs9_stage as varchar)',
+        'allowance_with_attrs.scenario_name'
+    ]) }} as ecl_summary_key,
     allowance_with_attrs.as_of_date,
     allowance_with_attrs.product_type,
     allowance_with_attrs.score_band,

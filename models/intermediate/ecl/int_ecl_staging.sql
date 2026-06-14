@@ -1,21 +1,5 @@
--- Mart-prep intermediate. Assigns IFRS 9 ECL stage (1, 2, or 3) per loan
--- as of the ECL reference date. Reads dim_loan_current_state, fct_loan_lifecycle,
--- dim_loan, and int_ecl_pd_term_structure (for relative-PD SICR trigger).
---
--- Stage 3: credit-impaired (IFRS 9 §5.5.3). PD = 1.0.
--- Stage 2: SICR — significant increase in credit risk since origination. Lifetime ECL.
--- Stage 1: no SICR. 12-month ECL.
---
--- SICR triggers (any fires Stage 2):
---   1. Quantitative backstop: DPD >= 30 (IFRS 9 §B5.5.19 rebuttable presumption).
---   2. Relative PD multiple: current_lifetime_pd / origination_lifetime_pd
---      exceeds ecl_sicr_lifetime_pd_multiple var.
---   3. Absolute PD delta: (current_lifetime_pd - origination_lifetime_pd)
---      exceeds ecl_sicr_pd_delta_bp / 10000 var.
---   4. Watchlist override: manual Stage 2 classification.
---
--- Paid-off loans (final_status = 'paid_off' and ending_balance = 0) are included
--- with ecl_amount = 0 and is_terminal = TRUE for allowance auditability.
+-- Mart-prep intermediate. Assigns IFRS 9 ECL stage per loan at the ECL reference date.
+-- Stage 3: credit-impaired. Stage 2: SICR (DPD backstop OR relative-PD OR delta-PD OR watchlist). Stage 1: no SICR.
 
 {{ config(materialized='view') }}
 
@@ -100,9 +84,9 @@ loan_staging as (
         lifecycle.total_months_on_book,
         constants.sicr_pd_delta_threshold,
         constants.sicr_pd_multiple,
+        origination_pd.origination_pd_rate,
         coalesce(pd_term_structure.pd_12m, 0.0) as current_pd_12m,
         coalesce(pd_term_structure.pd_lifetime, 0.0) as current_lifetime_pd,
-        coalesce(origination_pd.origination_pd_rate, 0.0) as origination_pd_rate,
         watchlist.loan_id is not null as is_on_watchlist
     from current_state
     inner join loan_attrs

@@ -1,7 +1,7 @@
 """IFRS 9 ECL backtest: modeled vs realized loss over historical periods.
 
 Iterates quarterly as_of_dates (2022-Q1 through 2023-Q4) and computes:
-- Modeled ECL (baseline scenario) per loan at each as_of_date.
+- Modeled ECL (simplified proxy) per loan at each as_of_date.
 - Realized loss (principal_writeoff_amount) observed 12 months later.
 
 Outputs coverage_ratio = sum(realized) / sum(modeled) and bias by segment.
@@ -10,6 +10,14 @@ Results written to data/local/ecl_backtest_results_{run_date}.csv.
 Why Python: the backtest loops over multiple historical as_of_dates — a
 temporal iteration that cannot be expressed as set-based SQL without collapsing
 to a single cutoff date.
+
+Simplified backtest methodology (intentional simplification):
+The modeled ECL here uses flat PD estimates by IFRS 9 stage: Stage 1 = 5%,
+Stage 2 = 15%, Stage 3 = 100%. These are stylized parameters, NOT the
+Markov-derived PDs from mart_finance_ecl_allowance. This backtest is a
+sanity-check of the EAD/LGD parameterisation and realized-loss measurement
+pipeline, not a validation of the dbt ECL model's Markov PD methodology.
+Coverage ratio [0.5, 2.0] validates the proxy model, not the deployed ECL.
 """
 
 import datetime
@@ -100,10 +108,25 @@ def compute_modeled_ecl_at_date(
     current_state["stage"] = current_state.apply(
         lambda r: assign_stage(r["delinquency_bucket"], r["loan_status"]), axis=1
     )
+
+    unknown_product_types = set(current_state["product_type"]) - set(ccf_map)
+    if unknown_product_types:
+        raise ValueError(
+            f"Unknown product types in CCF map: {sorted(unknown_product_types)}. "
+            f"Add them to ecl_ead_parameters.csv."
+        )
     current_state["ead"] = current_state.apply(
-        lambda r: compute_ead(r, ccf_map.get(r["product_type"], 0.0)), axis=1
+        lambda r: compute_ead(r, ccf_map[r["product_type"]]), axis=1
     )
-    current_state["lgd"] = current_state["product_type"].map(lgd_map).fillna(0.9)
+
+    lgd_series = current_state["product_type"].map(lgd_map)
+    missing_lgd = current_state.loc[lgd_series.isna(), "product_type"].unique()
+    if len(missing_lgd) > 0:
+        raise ValueError(
+            f"Unknown product types in LGD map: {sorted(missing_lgd)}. "
+            f"Add them to ecl_lgd_parameters.csv."
+        )
+    current_state["lgd"] = lgd_series
 
     current_state["pd_12m"] = current_state["stage"].map({1: 0.05, 2: 0.15, 3: 1.0})
     current_state["ecl"] = current_state["pd_12m"] * current_state["lgd"] * current_state["ead"]

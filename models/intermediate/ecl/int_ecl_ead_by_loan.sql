@@ -1,16 +1,5 @@
--- Mart-prep intermediate. Computes Exposure at Default (EAD) per loan.
--- Grain: one row per loan_id.
---
--- Amortizing products (personal_loan, auto_loan, mortgage):
---   EAD = ending_balance_amount from the latest fct_payment row (ccf_rate = 0.00).
---
--- Credit card:
---   EAD = ending_balance_amount + ccf_rate * (credit_limit_amount - ending_balance_amount)
---   Undrawn commitment scaled by Credit Conversion Factor (Basel II retail revolving, 0.75).
---
--- Stage 3 loans: EAD is reduced by cumulative recovery_amount received after default_month.
--- For loans defaulted within the recovery_lag_months window, recovery_amount = 0 and EAD
--- equals the full ending_balance_amount.
+-- Mart-prep intermediate. Reads DWH facts/dimensions and risk marts to build
+-- ECL-specific EAD per loan for downstream mart_finance_ecl_* marts.
 
 {{ config(materialized='view') }}
 

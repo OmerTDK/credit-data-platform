@@ -102,12 +102,13 @@ class TestValidateParameters:
         assert lgd_map["mortgage"] < lgd_map["credit_card"]
 
 
-class TestBacktestCoverageRatio:
-    """Verify that the backtest coverage ratio is within plausible bounds.
+class TestSimplifiedBacktestCoverage:
+    """Verify that the simplified proxy backtest coverage ratio is within plausible bounds.
 
-    The synthetic book uses stylized parameters, so we expect the coverage
-    ratio (realized / modeled) to be within [0.5, 2.0] — broad bounds
-    appropriate for a synthetic dataset without fitted PD estimates.
+    The backtest uses flat PD estimates by stage (5%/15%/100%), NOT the
+    Markov-derived PDs from mart_finance_ecl_allowance. Coverage ratio [0.5, 2.0]
+    validates the EAD/LGD parameterisation and realized-loss pipeline, not the
+    deployed dbt ECL model's Markov PD methodology. See backtest.py module docstring.
     """
 
     COVERAGE_MIN = 0.5
@@ -140,4 +141,40 @@ class TestBacktestCoverageRatio:
             f"Aggregate coverage ratio {aggregate_coverage:.4f} is outside "
             f"[{self.COVERAGE_MIN}, {self.COVERAGE_MAX}]. "
             f"total_modeled={total_modeled:.2f}, total_realized={total_realized:.2f}"
+        )
+
+    def test_segment_coverage_ratio_within_bounds(self, backtest_results: pd.DataFrame) -> None:
+        # Wide bounds for a synthetic book with flat PD proxy.
+        # Lower bound 0.001 accommodates prime segments where realized losses are
+        # near-zero but modeled ECL (5% flat PD) is positive.
+        # Upper bound 100.0 catches catastrophically wrong EAD/LGD parameterisation.
+        segment_coverage_min = 0.001
+        segment_coverage_max = 100.0
+        min_loans_threshold = 5
+
+        segments_with_exposure = backtest_results[
+            (backtest_results["loan_count"] >= min_loans_threshold)
+            & (backtest_results["total_modeled_ecl"] > 0)
+            & (backtest_results["total_realized_loss"] > 0)
+        ].copy()
+
+        if segments_with_exposure.empty:
+            pytest.skip("No segments with sufficient exposure for segment-level coverage test")
+
+        segments_with_exposure["coverage_ratio"] = (
+            segments_with_exposure["total_realized_loss"]
+            / segments_with_exposure["total_modeled_ecl"]
+        )
+
+        violating = segments_with_exposure[
+            (segments_with_exposure["coverage_ratio"] < segment_coverage_min)
+            | (segments_with_exposure["coverage_ratio"] > segment_coverage_max)
+        ]
+
+        failing_segments = violating[
+            ["product_type", "score_band", "stage", "coverage_ratio"]
+        ].to_string(index=False)
+        assert violating.empty, (
+            f"{len(violating)} segment(s) have coverage ratio outside "
+            f"[{segment_coverage_min}, {segment_coverage_max}]:\n{failing_segments}"
         )
