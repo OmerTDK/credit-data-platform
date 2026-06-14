@@ -1,0 +1,6 @@
+packages:
+  - package: elementary-data/elementary
+    version: 0.24.0
+    ## Docs: https://docs.elementary-data.com
+    ## Pinned to 0.24.0 — the latest dbt package release compatible with
+    ## dbt-core 1.11. The edr CLI (elementary-data) tracks the same minor.

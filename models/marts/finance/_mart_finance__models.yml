@@ -110,6 +110,15 @@ models:
     config:
       contract:
         enforced: true
+    data_tests:
+      - elementary.volume_anomalies:
+          tags: ['elementary']
+          config:
+            severity: warn
+      - elementary.schema_changes:
+          tags: ['elementary']
+          config:
+            severity: warn
     columns:
       - name: ecl_summary_key
         description: Surrogate key — MD5 over (as_of_date, product_type, score_band, ifrs9_stage, scenario_name). Enforces grain uniqueness.

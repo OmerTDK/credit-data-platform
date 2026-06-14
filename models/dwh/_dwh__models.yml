@@ -538,6 +538,20 @@ models:
     config:
       contract:
         enforced: true
+      elementary:
+        timestamp_column: report_month
+    data_tests:
+      - elementary.volume_anomalies:
+          tags: ['elementary']
+          time_bucket:
+            period: month
+            count: 1
+          config:
+            severity: warn
+      - elementary.schema_changes:
+          tags: ['elementary']
+          config:
+            severity: warn
     columns:
       - name: payment_key
         description: Surrogate PK derived from (loan_id, months_on_book).
