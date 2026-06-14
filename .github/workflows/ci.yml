@@ -17,6 +17,12 @@ jobs:
       - run: uv run dbt deps
         env:
           DBT_PROFILES_DIR: .
+      # dbt parse writes target/manifest.json, which orchestration/definitions.py
+      # loads at import time — it MUST exist before pytest collects the orchestration
+      # tests. (conftest.py regenerates it if missing as a belt-and-suspenders guard.)
+      - run: uv run dbt parse
+        env:
+          DBT_PROFILES_DIR: .
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: mkdir -p data/local
@@ -26,9 +32,6 @@ jobs:
       # first run (no historical baseline). The sole Elementary-producing run is
       # make dagster-materialize below (ELEMENTARY_CAPTURE=1).
       - run: uv run pytest -v
-        env:
-          DBT_PROFILES_DIR: .
-      - run: uv run dbt parse
         env:
           DBT_PROFILES_DIR: .
       - run: uv run dbt build --select staging
