@@ -4,7 +4,7 @@ Multi-product consumer-credit data platform: calibrated synthetic loan book, dim
 
 > Status: under construction — not yet at definition-of-done.
 
-**Phase 2b done:** dimensional + event-sourced DWH layer — 9 models across `dwh` schema (3 conformed dims, 1 SCD2 borrower dim, 1 event-sourced current-state dim, 2 facts, 1 accumulating-snapshot lifecycle fact, 1 immutable state-event stream), dbt contracts on all 9 models, 192 DWH data tests (relationships, accepted_values with not_null, 7 custom invariant tests), 14 new pytest fixtures asserting row counts and data invariants, full CI green in ~32 s end-to-end — see [ADR-0005](docs/adr/0005-dimensional-layer-and-event-sourced-loan-state.md).
+**Phase 2b done:** dimensional + event-sourced DWH layer — 9 models across `dwh` schema (3 conformed dims, 1 SCD2 borrower dim, 1 event-sourced current-state dim, 2 facts, 1 accumulating-snapshot lifecycle fact, 1 immutable state-event stream), dbt contracts on all 9 models, 191 DWH data tests (relationships including borrower_key FK on all 5 fact/dim models, accepted_values with not_null, 9 custom invariant tests), 17 new pytest fixtures asserting row counts and data invariants, full CI green in ~32 s end-to-end — see [ADR-0005](docs/adr/0005-dimensional-layer-and-event-sourced-loan-state.md).
 
 **Phase 2a done:** dbt sources + staging layer over the parquet landing zone — 3 staging views (`stg.loanbook__*`) read the landing parquet in place via dbt-duckdb `external_location`, per-layer schema mapping (`stg`/`int`/`dwh`/`mart_risk`/`mart_finance`), 45 dbt data tests green in CI against the generated four-product book — see [ADR-0003](docs/adr/0003-external-parquet-sources-and-schema-mapping.md). Phase 1 done: seeded synthetic loan-book generator (`loanbook`, all four products — personal loans, auto loans, mortgages, credit cards) — delinquency state machine with validated transitions, per-product calibration anchored to published statistics ([sources](docs/calibration-sources.md)), byte-identical parquet from a fixed seed (12,000 accounts / 255,131 monthly rows / 9.3 MB in ~2.3 s via `make generate`) — see [ADR-0002](docs/adr/0002-synthetic-generator-architecture.md) and [ADR-0004](docs/adr/0004-multi-product-extension.md). Phase 0: dbt skeleton, DuckDB dev target, CI gates (`dbt parse`, SQLFluff); BigQuery prod target pending — see [ADR-0001](docs/adr/0001-dual-target-warehouse.md).
 
@@ -63,15 +63,15 @@ Landing zone (parquet)
 | Metric | Value |
 |--------|-------|
 | Loan book generation | 12,000 loans / 255,131 performance rows in ~2.3 s |
-| Staging build | 3 views + 45 data tests in ~0.4 s |
-| DWH build (staging + intermediate + DWH) | 9 tables + 7 views + 267 data tests in ~2.4 s |
+| Staging build | 3 views + 46 data tests in ~0.4 s |
+| DWH build (staging + intermediate + DWH) | 9 tables + 7 views + 258 data tests in ~2.4 s |
 | Full CI (ruff + sqlfluff + generate + pytest + dbt-parse + dbt-build) | ~32 s end-to-end |
-| Total dbt data tests | 267 (45 staging + 10 intermediate + 212 DWH) |
-| Total pytest tests | 339 (325 generator + 3 staging integration + 14 DWH integration) |
-| Custom dbt invariant tests | 7 (balance reconciliation, milestone ordering, valid transitions, SCD2 integrity, current-state consistency) |
+| Total dbt data tests | 258 (46 staging + 23 intermediate + 191 DWH) |
+| Total pytest tests | 342 (325 generator + 3 staging integration + 17 DWH integration) |
+| Custom dbt invariant tests | 9 (balance reconciliation, milestone ordering, valid transitions, SCD2 chain integrity, SCD2 current-row, payment flag exclusivity, current-state consistency, plus 3 staging) |
 | DWH models with enforced contracts | 9 of 9 |
 | SCD2 versions (dim_borrower) | 19,257 across 12,000 borrowers (max 12 versions per borrower) |
-| Event stream rows | 21,320 (12,000 origination + 6,597 delinquency transitions + 2,723 lifecycle transitions) |
+| Event stream rows | 21,320 (12,000 origination + 7,257 delinquency transitions + 2,063 lifecycle transitions) |
 
 ## Design decisions
 
