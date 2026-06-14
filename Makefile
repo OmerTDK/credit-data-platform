@@ -37,20 +37,24 @@ dbt-build-staging: ## Build and test the staging layer against the local DuckDB 
 	mkdir -p data/local
 	DBT_PROFILES_DIR=. uv run dbt build --select staging
 
-dbt-build-dwh: ## Build and test the intermediate + DWH dimensional layer
+dbt-build-dwh: ## Build and test the DWH dimensional layer and its ancestors
 	mkdir -p data/local
-	DBT_PROFILES_DIR=. uv run dbt build --select staging intermediate dwh
+	DBT_PROFILES_DIR=. uv run dbt build --select \
+		+dim_date +dim_product +dim_loan +dim_borrower +dim_loan_current_state \
+		+fct_loan_origination +fct_payment +fct_loan_state_event +fct_loan_lifecycle
 
 validate-ecl-params: ## Validate ECL seed parameters before dbt build
 	uv run python -m ecl_backtest.validate_parameters
 
-dbt-build-risk: ## Build risk mart models on top of the DWH
+dbt-build-risk: ## Build risk mart models and their ancestors
 	mkdir -p data/local
-	DBT_PROFILES_DIR=. uv run dbt build --select "int_risk_roll_rate_observations int_risk_vintage_cohort_spine mart_risk_roll_rate_matrix mart_risk_vintage_curve mart_risk_prepayment_speed"
+	DBT_PROFILES_DIR=. uv run dbt build --select \
+		+mart_risk_roll_rate_matrix +mart_risk_vintage_curve +mart_risk_prepayment_speed
 
-dbt-build-ecl: validate-ecl-params ## Build ECL seeds and mart_finance models
+dbt-build-ecl: validate-ecl-params ## Build ECL marts and their ancestors (incl. mart_risk)
 	mkdir -p data/local
-	DBT_PROFILES_DIR=. uv run dbt build --select "ecl_lgd_parameters ecl_ead_parameters ecl_scenario_weights ecl_watchlist int_ecl_pd_term_structure int_ecl_staging int_ecl_ead_by_loan int_ecl_lgd_by_loan int_ecl_components mart_finance_ecl_allowance mart_finance_ecl_summary"
+	DBT_PROFILES_DIR=. uv run dbt build --select \
+		+mart_finance_ecl_allowance +mart_finance_ecl_summary
 
 ci: lint lint-sql generate test dbt-parse dbt-build-staging dbt-build-dwh dbt-build-risk dbt-build-ecl ## Run the full CI suite locally
 

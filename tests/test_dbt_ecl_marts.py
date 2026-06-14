@@ -36,7 +36,14 @@ def _run_in_repo(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 @pytest.fixture(scope="module")
 def ecl_mart_build() -> subprocess.CompletedProcess[str]:
-    """Build seeds and ECL pipeline through mart_finance."""
+    """Build the ECL marts and every ancestor.
+
+    Ancestor selection (`+model`) makes this fixture independent of pytest
+    ordering. The ECL marts depend on the ECL seeds, the DWH, and the mart_risk
+    tables (via int_ecl_pd_term_structure); `+...` builds that whole chain —
+    staging -> intermediate -> dwh -> int_risk -> mart_risk -> int_ecl ->
+    mart_finance — so the build never fails on a missing upstream schema.
+    """
     return _run_in_repo(
         [
             "uv",
@@ -44,10 +51,7 @@ def ecl_mart_build() -> subprocess.CompletedProcess[str]:
             "dbt",
             "build",
             "--select",
-            "ecl_lgd_parameters ecl_ead_parameters ecl_scenario_weights ecl_watchlist "
-            "int_ecl_pd_term_structure int_ecl_staging int_ecl_ead_by_loan "
-            "int_ecl_lgd_by_loan int_ecl_components "
-            "mart_finance_ecl_allowance mart_finance_ecl_summary",
+            "+mart_finance_ecl_allowance +mart_finance_ecl_summary",
         ]
     )
 
