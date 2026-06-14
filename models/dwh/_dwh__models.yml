@@ -150,10 +150,14 @@ models:
           - unique
           - not_null
       - name: borrower_key
-        description: MD5 surrogate key derived from borrower_id; FK to dim_borrower._is_current rows.
+        description: MD5 surrogate key derived from borrower_id; entity-level FK to dim_borrower (constant across versions).
         data_type: varchar
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_borrower')
+                field: borrower_key
       - name: product_key
         description: MD5 surrogate key derived from product_type; FK to dim_product.
         data_type: varchar
@@ -330,7 +334,10 @@ models:
         data_tests:
           - not_null
       - name: _valid_to
-        description: First month this version is no longer active; 9999-12-31 for current rows.
+        description: >
+          Exclusive upper bound: first month this version is no longer active; 9999-12-31 for current rows.
+          Correct point-in-time join: report_month >= _valid_from AND report_month < _valid_to.
+          Do not use BETWEEN (double-counts the boundary month shared between two versions).
         data_type: date
         data_tests:
           - not_null
@@ -383,7 +390,10 @@ models:
         data_tests:
           - not_null
       - name: months_on_book
-        description: Total months on book as of the latest performance row.
+        description: >
+          Months on book at the time of the last recorded state-change event (from fct_loan_state_event).
+          For loans that have not changed state since origination this equals 1 (the origination event mob).
+          Use fct_loan_lifecycle.total_months_on_book for actual elapsed loan age.
         data_type: integer
         data_tests:
           - not_null
@@ -440,10 +450,14 @@ models:
                 to: ref('dim_loan')
                 field: loan_key
       - name: borrower_key
-        description: MD5 surrogate FK to dim_borrower (current row).
+        description: MD5 surrogate FK to dim_borrower (entity-level key, constant across versions).
         data_type: varchar
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_borrower')
+                field: borrower_key
       - name: product_key
         description: MD5 surrogate FK to dim_product.
         data_type: varchar
@@ -541,10 +555,14 @@ models:
                 to: ref('dim_loan')
                 field: loan_key
       - name: borrower_key
-        description: MD5 surrogate FK to dim_borrower (entity-level, not version).
+        description: MD5 surrogate FK to dim_borrower (entity-level key, constant across versions).
         data_type: varchar
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_borrower')
+                field: borrower_key
       - name: product_key
         description: MD5 surrogate FK to dim_product.
         data_type: varchar
@@ -706,10 +724,14 @@ models:
                 to: ref('dim_loan')
                 field: loan_key
       - name: borrower_key
-        description: MD5 surrogate FK to dim_borrower (entity-level key).
+        description: MD5 surrogate FK to dim_borrower (entity-level key, constant across versions).
         data_type: varchar
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_borrower')
+                field: borrower_key
       - name: product_key
         description: MD5 surrogate FK to dim_product.
         data_type: varchar
@@ -811,10 +833,14 @@ models:
                 to: ref('dim_loan')
                 field: loan_key
       - name: borrower_key
-        description: MD5 surrogate FK to dim_borrower.
+        description: MD5 surrogate FK to dim_borrower (entity-level key, constant across versions).
         data_type: varchar
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_borrower')
+                field: borrower_key
       - name: product_key
         description: MD5 surrogate FK to dim_product.
         data_type: varchar

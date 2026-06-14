@@ -3,11 +3,14 @@
 with date_range as (
     select
         cast('2020-01-01' as date) as start_date,
-        cast('2030-01-01' as date) as end_date
+        cast('2030-01-01' as date) as end_date,
+        -- day_count is (end_date - start_date) inclusive of the endpoint used in range().
+        -- range(0, day_count) produces one n per day; the WHERE below trims to < end_date.
+        datediff('day', cast('2020-01-01' as date), cast('2030-01-01' as date)) + 1 as day_count
 ),
 
 numbers as (
-    select unnest(range(0, 3653)) as n
+    select unnest(range(0, (select day_count from date_range))) as n
 ),
 
 date_spine as (
