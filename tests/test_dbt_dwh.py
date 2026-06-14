@@ -161,6 +161,33 @@ def test_dim_borrower_scd2_valid_from_monotonic(
     assert violations == 0, f"SCD2 valid_from ordering violated: {violations} rows"
 
 
+def test_dim_borrower_scd2_valid_to_equals_next_valid_from(
+    dwh_build: subprocess.CompletedProcess[str],
+) -> None:
+    """For non-current SCD2 rows, _valid_to must equal the immediately next _valid_from.
+
+    This verifies the LEAD(_valid_from, 1) offset is correct: a wrong offset (e.g.
+    LEAD(_valid_from, 2)) creates a 1-month gap in the timeline for borrowers with
+    multiple versions, but all other SCD2 tests (monotonic, one-current) stay green.
+    """
+    assert dwh_build.returncode == 0, dwh_build.stdout
+    with duckdb.connect(str(DUCKDB_FILE), read_only=True) as connection:
+        violations = connection.execute(
+            "SELECT COUNT(*) FROM ("
+            "  SELECT borrower_id, version_number, _valid_to,"
+            "         LEAD(_valid_from) OVER ("
+            "             PARTITION BY borrower_id ORDER BY version_number"
+            "         ) AS next_valid_from"
+            "  FROM dwh.dim_borrower"
+            ") sub"
+            " WHERE next_valid_from IS NOT NULL AND _valid_to != next_valid_from"
+        ).fetchone()[0]
+    assert violations == 0, (
+        f"SCD2 _valid_to chain broken: {violations} rows where _valid_to != next _valid_from. "
+        "This indicates a wrong LEAD offset in dim_borrower.sql."
+    )
+
+
 def test_fct_payment_grain_is_loan_month(
     dwh_build: subprocess.CompletedProcess[str],
 ) -> None:
@@ -206,19 +233,34 @@ def test_fct_loan_lifecycle_grain_is_one_row_per_loan(
 def test_lifecycle_milestone_ordering(
     dwh_build: subprocess.CompletedProcess[str],
 ) -> None:
+    """Lifecycle milestone invariants: set-membership and ordering.
+
+    Invariant 1 (set-membership): a later delinquency stage cannot appear without
+    all earlier stages. dpd_60 requires prior dpd_30; dpd_90_plus requires prior
+    dpd_60; default requires prior dpd_90_plus. This is enforced by the state
+    machine and must propagate into the lifecycle fact.
+
+    Invariant 2 (ordering): when both milestones are present, the earlier stage
+    must have a lower report_month than the later one.
+    """
     assert dwh_build.returncode == 0, dwh_build.stdout
     with duckdb.connect(str(DUCKDB_FILE), read_only=True) as connection:
         violations = connection.execute(
             "SELECT COUNT(*) FROM dwh.fct_loan_lifecycle"
             " WHERE"
-            "   (first_dpd60_month IS NOT NULL AND first_dpd30_month IS NOT NULL"
-            "    AND first_dpd60_month < first_dpd30_month)"
+            # Invariant 1: set-membership gaps are impossible per the state machine.
+            "   (first_dpd60_month IS NOT NULL AND first_dpd30_month IS NULL)"
+            "   OR (first_dpd90_month IS NOT NULL AND first_dpd60_month IS NULL)"
+            "   OR (default_month IS NOT NULL AND first_dpd90_month IS NULL)"
+            # Invariant 2: when both milestones are present the earlier one must precede.
+            "   OR (first_dpd60_month IS NOT NULL AND first_dpd30_month IS NOT NULL"
+            "       AND first_dpd60_month < first_dpd30_month)"
             "   OR (first_dpd90_month IS NOT NULL AND first_dpd60_month IS NOT NULL"
-            "    AND first_dpd90_month < first_dpd60_month)"
+            "       AND first_dpd90_month < first_dpd60_month)"
             "   OR (default_month IS NOT NULL AND first_dpd90_month IS NOT NULL"
-            "    AND default_month < first_dpd90_month)"
+            "       AND default_month < first_dpd90_month)"
         ).fetchone()[0]
-    assert violations == 0, f"Lifecycle milestone ordering violated: {violations} loans"
+    assert violations == 0, f"Lifecycle milestone invariants violated: {violations} loans"
 
 
 def test_current_state_matches_direct_computation(
@@ -248,11 +290,19 @@ def test_current_state_matches_direct_computation(
 def test_event_stream_valid_delinquency_transitions(
     dwh_build: subprocess.CompletedProcess[str],
 ) -> None:
+    """Delinquency transitions must match LEGAL_BUCKET_TRANSITIONS in state_machine.py.
+
+    Only dpd_90_plus -> default is a legal skip-to-default; current/dpd_30/dpd_60
+    must progress one bucket at a time. Allowing current/dpd_30/dpd_60 -> default
+    would mask generator bugs that produce illegal transitions.
+    """
     assert dwh_build.returncode == 0, dwh_build.stdout
+    # Must mirror LEGAL_BUCKET_TRANSITIONS in src/loanbook/state_machine.py exactly.
+    # Self-transitions are excluded: only transitions that produce a *changed* bucket appear.
     valid_transitions = {
-        "current": {"dpd_30", "default"},
-        "dpd_30": {"current", "dpd_60", "default"},
-        "dpd_60": {"current", "dpd_90_plus", "default"},
+        "current": {"dpd_30"},
+        "dpd_30": {"current", "dpd_60"},
+        "dpd_60": {"current", "dpd_90_plus"},
         "dpd_90_plus": {"current", "default"},
         "default": set(),
     }
@@ -268,6 +318,61 @@ def test_event_stream_valid_delinquency_transitions(
         assert to_bucket in allowed, (
             f"Invalid delinquency transition {from_bucket} -> {to_bucket} ({count} occurrences)"
         )
+
+
+def test_dpd90_to_default_is_delinquency_transition(
+    dwh_build: subprocess.CompletedProcess[str],
+) -> None:
+    """dpd_90_plus -> default must be delinquency_transition, not lifecycle_transition.
+
+    When a loan defaults it simultaneously changes delinquency_bucket (dpd_90_plus -> default)
+    and loan_status (active -> defaulted). The delinquency change is the analytically meaningful
+    event for roll-rate queries; classifying it as lifecycle_transition silently drops it from
+    delinquency roll-rate analyses.
+    """
+    assert dwh_build.returncode == 0, dwh_build.stdout
+    with duckdb.connect(str(DUCKDB_FILE), read_only=True) as connection:
+        rows = connection.execute(
+            "SELECT event_type, COUNT(*) AS cnt"
+            " FROM dwh.fct_loan_state_event"
+            " WHERE from_delinquency_bucket = 'dpd_90_plus'"
+            "   AND to_delinquency_bucket = 'default'"
+            " GROUP BY event_type"
+        ).fetchall()
+    result = {row[0]: row[1] for row in rows}
+    lifecycle_count = result.get("lifecycle_transition", 0)
+    delinquency_count = result.get("delinquency_transition", 0)
+    assert lifecycle_count == 0, (
+        f"dpd_90_plus -> default transitions misclassified as lifecycle_transition: "
+        f"{lifecycle_count} rows (should be 0); delinquency_transition count: {delinquency_count}"
+    )
+    assert delinquency_count > 0, (
+        "Expected at least one dpd_90_plus -> default delinquency_transition event"
+    )
+
+
+def test_no_lifecycle_transition_changes_delinquency_bucket(
+    dwh_build: subprocess.CompletedProcess[str],
+) -> None:
+    """No lifecycle_transition row may simultaneously be a delinquency bucket change.
+
+    A lifecycle_transition (paid_off, defaulted, recovery_complete) that also changes
+    the delinquency bucket means the CASE order in fct_loan_state_event is wrong:
+    the delinquency change takes analytical priority and must be classified as
+    delinquency_transition.
+    """
+    assert dwh_build.returncode == 0, dwh_build.stdout
+    with duckdb.connect(str(DUCKDB_FILE), read_only=True) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM dwh.fct_loan_state_event"
+            " WHERE event_type = 'lifecycle_transition'"
+            "   AND from_delinquency_bucket IS NOT NULL"
+            "   AND from_delinquency_bucket != to_delinquency_bucket"
+        ).fetchone()[0]
+    assert count == 0, (
+        f"Found {count} lifecycle_transition rows that also change delinquency_bucket; "
+        "these should be classified as delinquency_transition"
+    )
 
 
 def test_fct_loan_state_event_all_loans_have_origination(

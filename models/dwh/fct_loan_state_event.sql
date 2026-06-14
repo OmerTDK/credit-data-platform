@@ -49,11 +49,11 @@ state_changes as (
         prev_loan_status as from_loan_status,
         case
             when prev_delinquency_bucket is null then 'origination'
+            when prev_delinquency_bucket != delinquency_bucket then 'delinquency_transition'
             when
                 loan_status != coalesce(prev_loan_status, loan_status)
                 and loan_status in ('paid_off', 'defaulted', 'recovery_complete')
                 then 'lifecycle_transition'
-            when prev_delinquency_bucket != delinquency_bucket then 'delinquency_transition'
         end as event_type
     from ordered
     where
