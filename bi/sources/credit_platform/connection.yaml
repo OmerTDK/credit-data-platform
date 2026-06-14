@@ -1,0 +1,7 @@
+name: credit_platform
+type: duckdb
+options:
+  # Points at the dbt-built local warehouse. `make generate` + the scoped dbt
+  # builds (or `make ci`) must run first so the dwh / mart tables exist. The path
+  # is relative to this source directory: bi/sources/credit_platform/ -> repo root.
+  filename: ../../../data/local/credit_platform.duckdb

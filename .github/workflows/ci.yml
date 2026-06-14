@@ -27,6 +27,7 @@ jobs:
       - run: uv run ruff format --check .
       - run: mkdir -p data/local
       - run: uv run sqlfluff lint models seeds snapshots tests/dbt
+      - run: uv run sqlfluff lint bi/sources/credit_platform --dialect duckdb --templater raw
       - run: make generate
       # pytest runs WITHOUT ELEMENTARY_CAPTURE; Elementary tests pass vacuously on
       # first run (no historical baseline). The sole Elementary-producing run is
@@ -35,6 +36,15 @@ jobs:
         env:
           DBT_PROFILES_DIR: .
       - run: uv run dbt build --select staging
+        env:
+          DBT_PROFILES_DIR: .
+      # Semantic layer: build the MetricFlow time spine + backing facts/marts,
+      # then validate the semantic manifest against the DuckDB warehouse. The
+      # metric pin tests already ran in pytest above; this is the manifest gate.
+      - run: make dbt-build-semantic
+        env:
+          DBT_PROFILES_DIR: .
+      - run: make semantic-validate
         env:
           DBT_PROFILES_DIR: .
       # Asset-materialization path: Dagster runs `dbt build` via DbtCliResource
