@@ -222,8 +222,7 @@ def run_backtest() -> pd.DataFrame:
     if not all_results:
         return pd.DataFrame()
 
-    combined = pd.concat(all_results, ignore_index=True)
-    return combined
+    return pd.concat(all_results, ignore_index=True)
 
 
 def summarize_backtest(results: pd.DataFrame) -> pd.DataFrame:

@@ -56,12 +56,11 @@ def run_validation() -> list[str]:
     lgd_params = load_seed("ecl_lgd_parameters.csv")
     ead_params = load_seed("ecl_ead_parameters.csv")
 
-    all_violations = (
+    return (
         validate_scenario_weights(scenario_weights)
         + validate_lgd_rates(lgd_params)
         + validate_ccf_rates(ead_params)
     )
-    return all_violations
 
 
 def main() -> None:
