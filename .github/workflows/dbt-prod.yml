@@ -1,0 +1,53 @@
+# Scheduled dbt build against BigQuery (production target).
+#
+# Runs daily at 06:00 UTC and on manual dispatch. Requires the BQ_PROJECT_ID
+# and BQ_KEYFILE_JSON secrets to be configured in the repository settings.
+#
+# The workflow:
+#   1. Generates the synthetic landing zone (deterministic from seed=42)
+#   2. Runs `dbt build --target prod` against BigQuery
+#   3. Uploads the Elementary observability report as an artifact
+#
+# Disabled by default — uncomment the schedule trigger once the BigQuery
+# Sandbox project is provisioned and secrets are configured.
+
+name: dbt-prod
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: "0 6 * * *"
+
+jobs:
+  dbt-build-prod:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8.2.0
+      - run: uv sync --locked
+
+      - name: Write service account keyfile
+        run: echo '${{ secrets.BQ_KEYFILE_JSON }}' > /tmp/bq-keyfile.json
+
+      - name: Install dbt packages
+        run: uv run dbt deps
+        env:
+          DBT_PROFILES_DIR: .
+
+      - name: Generate synthetic landing zone
+        run: make generate
+
+      - name: dbt build (BigQuery prod)
+        run: |
+          uv run dbt build --target prod --exclude tag:elementary
+        env:
+          DBT_PROFILES_DIR: .
+          BQ_PROJECT_ID: ${{ secrets.BQ_PROJECT_ID }}
+          BQ_KEYFILE: /tmp/bq-keyfile.json
+
+      - name: Clean up keyfile
+        if: always()
+        run: rm -f /tmp/bq-keyfile.json

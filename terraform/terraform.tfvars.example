@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — never commit credentials.
+
+project_id = "your-gcp-project-id"
+region     = "EU"
+
+# Optional: service account for CI dbt runs.
+# Leave empty to skip IAM bindings (use ADC with your personal account).
+# dbt_service_account_email = "dbt-runner@your-project.iam.gserviceaccount.com"

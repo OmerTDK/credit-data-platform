@@ -105,6 +105,10 @@ security: ## Run the security scanners (bandit SAST + pip-audit dependency CVEs)
 	uv run bandit -r src -c pyproject.toml
 	uv run pip-audit
 
+dbt-docs: ## Generate dbt documentation site (target/)
+	mkdir -p data/local
+	DBT_PROFILES_DIR=. uv run dbt docs generate
+
 ci: lint lint-sql generate test dbt-parse dbt-build-staging dbt-build-dwh dbt-build-risk dbt-build-ecl dbt-build-semantic semantic-validate dagster-materialize ## Run the full CI suite locally
 
 docker-build: ## Build the project image
