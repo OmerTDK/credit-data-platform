@@ -145,20 +145,20 @@ class TestTimeTravel:
 
         # Capture original loan_id set
         meta = get_table_metadata_path("loans", iceberg_warehouse)
-        original_ids = set(
+        original_ids = {
             r[0]
             for r in duckdb_conn.execute(f"SELECT loan_id FROM iceberg_scan('{meta}')").fetchall()
-        )
+        }
 
         # Append and time-travel back
         append_to_table("loans", LOANS_PARQUET, iceberg_warehouse)
         meta = get_table_metadata_path("loans", iceberg_warehouse)
-        historical_ids = set(
+        historical_ids = {
             r[0]
             for r in duckdb_conn.execute(
                 f"SELECT loan_id FROM iceberg_scan('{meta}', snapshot_from_id = {first_snap})"
             ).fetchall()
-        )
+        }
         assert original_ids == historical_ids
 
 

@@ -6,17 +6,22 @@ in-file column with the partition value on a name collision, which would
 silently turn the DATE column into a VARCHAR.
 """
 
-from datetime import date
+from __future__ import annotations
+
 from decimal import Decimal
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from datetime import date
+    from pathlib import Path
+
+    from loanbook.borrowers import Borrower
+    from loanbook.generate import LoanBook
+    from loanbook.loans import Loan
+    from loanbook.performance import MonthlyPerformance
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-
-from loanbook.borrowers import Borrower
-from loanbook.generate import LoanBook
-from loanbook.loans import Loan
-from loanbook.performance import MonthlyPerformance
 
 MONEY_DECIMAL_DIGITS = 12
 MONEY_SCALE = 2

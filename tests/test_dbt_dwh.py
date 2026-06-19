@@ -123,10 +123,10 @@ def test_dim_product_has_all_four_products(
 ) -> None:
     assert dwh_build.returncode == 0, dwh_build.stdout
     with duckdb.connect(str(DUCKDB_FILE), read_only=True) as connection:
-        products = set(
+        products = {
             row[0]
             for row in connection.execute("SELECT product_type FROM dwh.dim_product").fetchall()
-        )
+        }
     expected = {"personal_loan", "auto_loan", "mortgage", "credit_card"}
     assert products == expected, f"dim_product products wrong: {products}"
 
