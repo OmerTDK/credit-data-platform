@@ -88,11 +88,12 @@ resource "google_bigquery_dataset" "datasets" {
 # IAM: grant the dbt service account BigQuery Data Editor + Job User
 # ---------------------------------------------------------------------------
 
-resource "google_project_iam_member" "dbt_bq_data_editor" {
-  count   = var.dbt_service_account_email != "" ? 1 : 0
-  project = var.project_id
-  role    = "roles/bigquery.dataEditor"
-  member  = "serviceAccount:${var.dbt_service_account_email}"
+resource "google_bigquery_dataset_iam_member" "dbt_bq_data_editor" {
+  for_each   = var.dbt_service_account_email != "" ? local.datasets : {}
+  project    = var.project_id
+  dataset_id = google_bigquery_dataset.datasets[each.key].dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${var.dbt_service_account_email}"
 }
 
 resource "google_project_iam_member" "dbt_bq_job_user" {

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 from pyiceberg.catalog.sql import SqlCatalog
+from pyiceberg.exceptions import NoSuchTableError
 from pyiceberg.types import StringType
 
 ICEBERG_WAREHOUSE_DIR = "data/iceberg"
@@ -59,7 +60,7 @@ def write_table_iceberg(
     try:
         tbl = catalog.load_table(fq_name)
         tbl.overwrite(arrow_table)
-    except Exception:
+    except NoSuchTableError:
         tbl = catalog.create_table(fq_name, schema=arrow_table.schema)
         tbl.overwrite(arrow_table)
     return fq_name
