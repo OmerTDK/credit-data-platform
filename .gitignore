@@ -11,6 +11,7 @@ logs/
 *.duckdb
 data/local/
 data/landing/
+data/iceberg/
 .user.yml
 artifacts/
 package-lock.yml

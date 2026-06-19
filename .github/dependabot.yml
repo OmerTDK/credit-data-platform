@@ -4,3 +4,16 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    # uv.lock is the lockfile; Dependabot opens PRs for outdated packages.
+    allow:
+      - dependency-type: direct
+
+  - package-ecosystem: terraform
+    directory: /terraform
+    schedule:
+      interval: monthly

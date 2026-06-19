@@ -2,7 +2,9 @@
 
 Multi-product consumer-credit data platform: calibrated synthetic loan book, dimensional + event-sourced dbt warehouse, IFRS 9 ECL, semantic layer, observability
 
-> Status: Phases 0–6 complete. BigQuery prod target + Terraform IaC deferred (open GCP-account question).
+> Status: Phases 0–7 complete. BigQuery prod target + Terraform IaC ready; GCP project creation is the only manual step.
+
+**Phase 7 done:** Iceberg landing zone + BigQuery/Terraform + DoD polish — an **Apache Iceberg** landing zone (`src/loanbook/iceberg.py`) writes the generated loan book into Iceberg tables via **PyIceberg** with a local SQLite catalog — zero external infrastructure, runs in CI. **Time travel exercised end-to-end**: write 12K rows → append 12K → DuckDB `iceberg_scan(snapshot_from_id=first)` returns exactly 12K (the historical snapshot). **Schema evolution exercised end-to-end**: add a `risk_tier` column metadata-only → DuckDB reads all 12K existing rows with NULL → no data files rewritten (snapshot count unchanged). **BigQuery prod target**: `profiles.yml` now has a `prod` output (type: bigquery, env-var auth), `dbt-bigquery` is a main dependency. **Terraform IaC** (`terraform/main.tf`) provisions 6 BQ datasets + optional IAM bindings. **GitHub Actions** `dbt-prod.yml` workflow for scheduled BQ runs (dispatch-ready; cron commented until GCP project provisioned). **Hygiene**: Apache-2.0 LICENSE, SECURITY.md, Dependabot covers pip + terraform + github-actions. **+11 pytest tests (430 → 441)**; full `make ci` green — see [ADR-0012](docs/adr/0012-iceberg-landing-zone.md), [ADR-0013](docs/adr/0013-bigquery-terraform.md).
 
 **Phase 6 done:** semantic layer + Evidence dashboard — a **MetricFlow semantic layer** (`models/semantic/`) defines **7 governed metrics once** over the dwh/marts (`default_rate`, `cpr`, `portfolio_yield`, `vintage_loss_curve`, `origination_volume`, `avg_balance`, `delinquency_rate`) plus building-block simple metrics, across 5 semantic models with vintage / product / credit_tier / delinquency_status dimensions. Queryable locally with `mf query` / `mf validate-configs` against DuckDB — `metricflow_duckdb_supported = true` for the open-source CLI (the dbt-docs "supported platforms" list is the *hosted* dbt Cloud Semantic Layer; the `mf` CLI ships a `DuckDbSqlPlanRenderer` and its own tutorial uses a DuckDB profile). **All 7 metric values pinned** from independent warehouse derivations (full precision via `mf query --csv`, each cross-checked against a direct DuckDB query), so a metric-definition change that moves any number fails CI. Kill-test verified (`principal_amount + 1` mutant fails the `origination_volume` pin). An **Evidence (evidence.dev) BI-as-code dashboard** (`bi/`) reads the same DuckDB warehouse and builds to an 87 MB static site (`evidence build`) with 4 pages — portfolio overview, vintage curves, risk-cohort drill-down, and a FinOps/cost view (rows × columns cost proxy from `duckdb_tables()`). The Node build is wired as `make evidence-build` (not in CI to keep CI network-free); the **query layer is gated in CI** via 10 pytest tests that execute every Evidence source query against the warehouse. **+27 pytest tests (403 → 430)**, full clean `make ci` green (430 passed; `mf` metrics validated 0 errors; Dagster materializes 465 nodes / 0 error) — BigQuery prod target + Terraform IaC remain deferred — see [ADR-0011](docs/adr/0011-semantic-layer-and-evidence-dashboard.md).
 
@@ -31,27 +33,41 @@ The loan book is fully synthetic and reproducible from a fixed seed — shareabl
 ## Architecture
 
 ```
-Landing zone (parquet)
-       |
-       v
-[ Staging (stg) ]         3 views, 1:1 with source, typed + renamed
-       |
-       v
-[ Intermediate (int) ]    6 views, business logic, SCD2 prep + mart-prep risk
-       |
-       v
-[ DWH (dwh) ]             9 tables: 4 dims + 1 SCD2 + 1 event-stream + 3 facts
-       |
-       v
-[ Marts ]                 mart_risk: roll-rate matrix, vintage curves, prepayment speed
-                          mart_finance: IFRS 9 ECL allowance + summary (Phase 4)
-       |
-       v
-[ Orchestration ]         Dagster @dbt_assets (DbtCliResource) + 3 asset-check gates (Phase 5)
-[ Observability ]         Elementary test-result / volume / schema monitors -> edr report
-[ Security CI ]           bandit + pip-audit + gitleaks on every PR
-[ Semantic layer ]        MetricFlow: 7 governed metrics defined once, mf query on DuckDB (Phase 6)
-[ BI-as-code ]            Evidence: 4-page static site over the same DuckDB warehouse (Phase 6)
+                     make generate
+                          |
+                          v
+              Landing zone (parquet)  ──────>  Iceberg tables (PyIceberg + SQLite catalog)
+                          |                         |
+                          v                         v
+                   [ Staging (stg) ]          Time travel / schema evolution
+                   3 views, typed              via DuckDB iceberg_scan()
+                          |
+                          v
+               [ Intermediate (int) ]    6 views, business logic, SCD2 prep
+                          |
+                          v
+                  [ DWH (dwh) ]          9 tables: 4 dims + SCD2 + event-stream + 3 facts
+                          |
+            +-------------+-------------+
+            |                           |
+            v                           v
+     [ mart_risk ]               [ mart_finance ]
+     roll-rate, vintage,         IFRS 9 ECL allowance
+     prepayment speed            + summary
+            |                           |
+            +-------------+-------------+
+                          |
+            +-------------+-------------+-------------+
+            |             |             |             |
+            v             v             v             v
+     [ Orchestration ] [ Observability ] [ Semantic ] [ BI-as-code ]
+     Dagster @dbt_assets Elementary     MetricFlow   Evidence
+     + 3 asset-check   monitors +      7 governed   4-page static
+     quality gates     edr report      metrics      site
+                          |
+                          v
+                  [ Security CI ]       bandit + pip-audit + gitleaks
+                  [ IaC ]               Terraform → BigQuery datasets
 ```
 
 ### DWH layer (Phase 2b)
@@ -152,7 +168,7 @@ Dimensions/entities: vintage (origination cohort quarter), product, credit_tier 
 | Full Dagster materialization | 465 dbt nodes PASS / 0 ERROR (dbt build via DbtCliResource + all gates) |
 | Elementary observability | 4 anomaly/schema monitors, 400 captured test results, 7.4 MB `edr report` HTML artifact |
 | Security scanners (every PR) | bandit 0 issues + pip-audit 0 known CVEs + gitleaks secret scan |
-| Total pytest tests | 430 (403 prior + 27 Phase 6: 17 semantic-layer + 10 Evidence query-layer) |
+| Total pytest tests | 441 (430 prior + 11 Phase 7: Iceberg time-travel + schema-evolution + snapshot inspection) |
 | Governed metrics (semantic layer) | 7 (`default_rate`, `cpr`, `portfolio_yield`, `vintage_loss_curve`, `origination_volume`, `avg_balance`, `delinquency_rate`) over 5 semantic models |
 | MetricFlow on DuckDB | Supported (open-source `mf` CLI); `mf validate-configs` + `mf query` green; all 7 metric values pinned (full-precision CSV) + kill-tested |
 | Evidence dashboard | 4 pages / 6 source queries; `evidence build` → 87 MB static site; query layer gated in CI (no Node/network) |
@@ -165,6 +181,13 @@ Dimensions/entities: vintage (origination cohort quarter), product, credit_tier 
 | prepayment_speed rows | 588 (amortizing products only; credit cards excluded via is_amortizing filter) |
 | SCD2 versions (dim_borrower) | 19,257 across 12,000 borrowers (max 12 versions per borrower) |
 | Event stream rows | 21,320 (12,000 origination + 7,257 delinquency transitions + 2,063 lifecycle transitions) |
+| Iceberg time travel | Write 12K → append 12K → `iceberg_scan(snapshot_from_id=first)` returns 12K (verified in CI) |
+| Iceberg schema evolution | Add `risk_tier` column metadata-only → DuckDB reads NULL on 12K existing rows → no data rewrite |
+| Iceberg landing zone | PyIceberg + SQLite catalog; 2 tables (`loans`, `borrowers`); DuckDB `iceberg_scan()` reads both |
+| BigQuery prod target | `profiles.yml` prod output (type: bigquery, env-var auth); `dbt-bigquery` as main dependency |
+| Terraform IaC | 6 BQ datasets + optional IAM; ~80 lines of HCL |
+| Dependabot ecosystems | github-actions (weekly) + pip (weekly) + terraform (monthly) |
+| License | Apache-2.0 |
 
 ## Design decisions
 
@@ -181,6 +204,28 @@ See [docs/adr/](docs/adr/) — each major decision documented with its trade-off
 - [ADR-0009](docs/adr/0009-observability-elementary.md) — data observability with Elementary (capture gating, anomaly monitors, edr report)
 - [ADR-0010](docs/adr/0010-security-ci-layer.md) — security CI layer (bandit + pip-audit + gitleaks)
 - [ADR-0011](docs/adr/0011-semantic-layer-and-evidence-dashboard.md) — semantic layer (MetricFlow on DuckDB) + Evidence dashboard + the BigQuery/Terraform deferral
+- [ADR-0012](docs/adr/0012-iceberg-landing-zone.md) — Apache Iceberg landing zone (PyIceberg + SQLite catalog, time travel, schema evolution)
+- [ADR-0013](docs/adr/0013-bigquery-terraform.md) — BigQuery production target + Terraform IaC (resolves ADR-0001 deferral)
+
+## The hardest design decision
+
+**Event-sourced loan state vs. a mutable status column.**
+
+The loan book's current state (delinquency bucket, lifecycle status) could be stored as a single row per loan, overwritten monthly. That is simpler, but it destroys history: "what was this loan's delinquency bucket three months ago?" requires a separate snapshot or audit table that inevitably drifts.
+
+The alternative — and the path taken — is an immutable event stream (`fct_loan_state_event`: 21,320 rows) where every state transition is recorded as a fact. Current state (`dim_loan_current_state`) is *derived* deterministically from the stream, never stored directly. A custom test verifies that the event-stream derivation matches an independent direct computation from the performance table.
+
+Why this was hard:
+
+1. **Performance cost.** Deriving current state from a stream is a window-function query over the entire event history, not a simple lookup. On 12K loans with 21K events this is milliseconds; on a 10M-loan production book it is a design constraint that forces partitioning or materialization choices. The decision commits to that cost.
+
+2. **Downstream complexity.** Every model that needs current state must join to the derived dimension, not read a column off the loan table. Risk marts, ECL staging, and the semantic layer all flow through this join. A mutable-status design would have been a simpler LEFT JOIN.
+
+3. **Testing burden.** The immutable-stream contract requires a singular test that replays events independently and asserts equivalence with the derived dimension — a test that does not exist in a mutable-column world.
+
+The payoff: point-in-time correctness is *structural*, not procedural. You cannot accidentally query "current delinquency" and get a stale value, because current delinquency is always recomputed from the stream. The roll-rate matrix (which needs prior-period state) reads directly from the event stream without any time-travel workaround. And the SCD2 borrower dimension (19,257 version rows tracking worst-delinquency-across-loans) exists because the event stream makes the version boundaries computable — without it, the SCD2 would require a separate change-capture process.
+
+See [ADR-0005](docs/adr/0005-dimensional-layer-and-event-sourced-loan-state.md) for the full trade-off analysis.
 
 ## Quickstart
 

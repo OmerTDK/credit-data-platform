@@ -1,6 +1,7 @@
 # Committed on purpose (DBT_PROFILES_DIR=. pattern): the dev target is a local
-# DuckDB file with no credentials. The BigQuery prod target is pending — see
-# docs/adr/0001-dual-target-warehouse.md. Secrets never land here.
+# DuckDB file with no credentials. The BigQuery prod target uses env vars for
+# all secrets. See docs/adr/0001-dual-target-warehouse.md and
+# docs/adr/0013-bigquery-terraform.md.
 credit_platform:
   target: dev
   outputs:
@@ -8,6 +9,24 @@ credit_platform:
       type: duckdb
       path: data/local/credit_platform.duckdb
       threads: 4
+
+    # BigQuery production target — activated via `--target prod` or
+    # DBT_TARGET=prod. Requires: a GCP project with the datasets provisioned
+    # by terraform/ and ADC or a service-account keyfile.
+    #
+    # Auth options (in order of preference):
+    #   1. ADC: `gcloud auth application-default login` (local dev)
+    #   2. Service account JSON: set BQ_KEYFILE to the path
+    #   3. GitHub Actions: Workload Identity Federation (no keyfile)
+    prod:
+      type: bigquery
+      method: "{{ 'service-account' if env_var('BQ_KEYFILE', '') != '' else 'oauth' }}"
+      project: "{{ env_var('BQ_PROJECT_ID') }}"
+      keyfile: "{{ env_var('BQ_KEYFILE', '') }}"
+      dataset: dwh
+      location: EU
+      threads: 4
+      timeout_seconds: 300
 
 # The Elementary edr CLI reads its observability tables through a profile named
 # `elementary`. It points at the same local DuckDB warehouse, at the schema
