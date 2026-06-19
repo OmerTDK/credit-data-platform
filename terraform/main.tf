@@ -72,11 +72,13 @@ locals {
 resource "google_bigquery_dataset" "datasets" {
   for_each = local.datasets
 
-  dataset_id                 = each.key
-  friendly_name              = each.key
-  description                = each.value
-  location                   = var.region
-  delete_contents_on_destroy = false
+  dataset_id                      = each.key
+  friendly_name                   = each.key
+  description                     = each.value
+  location                        = var.region
+  delete_contents_on_destroy      = false
+  default_table_expiration_ms     = 5184000000
+  default_partition_expiration_ms = 5184000000
 
   labels = {
     managed_by = "terraform"
