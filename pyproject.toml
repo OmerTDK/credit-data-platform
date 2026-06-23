@@ -33,7 +33,7 @@ dev = [
     "dagster-webserver>=1.13.9",
     "bandit>=1.9.4",
     "pip-audit>=2.10.1",
-    "elementary-data[duckdb]>=0.24.0,<0.25.0",
+    "elementary-data[duckdb]>=0.24.0,<0.26.0",
     "dbt-metricflow>=0.13.0",
 ]
 
